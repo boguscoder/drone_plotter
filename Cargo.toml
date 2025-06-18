@@ -1,0 +1,21 @@
+[package]
+name = "stream_plotter"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+log_imu = []
+log_att = []
+log_pid = []
+log_mix = []
+log_dshot = []
+
+[dependencies]
+crossbeam-channel = "0.5.15"
+
+eframe = "0.31.1"
+egui = "0.31.1"
+egui-plotter = "0.4.0"
+
+plotters = { version = "0.3.7", features = ["full_palette"] }
+ringbuffer = "0.15.0"
