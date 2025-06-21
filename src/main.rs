@@ -1,3 +1,4 @@
+use core::sync::atomic::{AtomicUsize, Ordering};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use eframe::egui;
 use egui::ViewportBuilder;
@@ -5,34 +6,12 @@ use egui_plotter::EguiBackend;
 use plotters::prelude::full_palette::*;
 use plotters::prelude::*;
 use ringbuffer::{ConstGenericRingBuffer, RingBuffer};
-use std::io::{self, BufRead, BufReader};
-use std::time::{Duration, Instant}; // Add these imports
+use std::io::{self, BufRead, BufReader, Write};
+use std::time::{Duration, Instant};
+use strum::IntoEnumIterator;
+use strum_macros::{AsRefStr, EnumIter};
 
-// log_imu
-#[cfg(feature = "log_imu")]
-const VALS_PER_LINE: usize = 9;
-#[cfg(feature = "log_imu")]
-const LABELS: [&str; VALS_PER_LINE] = [
-    "gyr(x)", "gyr(y)", "gyr(z)", "acc(x)", "acc(y)", "acc(z)", "mag(x)", "mag(y)", "mag(z)",
-];
-
-// log_att
-#[cfg(feature = "log_att")]
-const VALS_PER_LINE: usize = 3;
-#[cfg(feature = "log_att")]
-const LABELS: [&str; VALS_PER_LINE] = ["roll", "pitch", "yaw"];
-
-//log_pid
-#[cfg(feature = "log_pid")]
-const VALS_PER_LINE: usize = 4;
-#[cfg(feature = "log_pid")]
-const LABELS: [&str; VALS_PER_LINE] = ["throttle", "roll", "pitch", "yaw"];
-
-// log_dshot
-#[cfg(any(feature = "log_dshot", feature = "log_mix"))]
-const VALS_PER_LINE: usize = 4;
-#[cfg(any(feature = "log_dshot", feature = "log_mix"))]
-const LABELS: [&str; VALS_PER_LINE] = ["M1", "M2", "M3", "M4"];
+static VALS_PER_LINE: AtomicUsize = AtomicUsize::new(0);
 
 const COLORS: [plotters::style::RGBColor; 9] = [
     RGBColor(141, 215, 242),
@@ -45,33 +24,81 @@ const COLORS: [plotters::style::RGBColor; 9] = [
     RGBColor(255, 128, 237),
     RGBColor(128, 222, 234),
 ];
+
 const MAX_HISTORY_LEN: usize = 512;
+
+// TODO: keep in sync with simplest_drone, move to shared crate one day
+#[derive(Debug, EnumIter, AsRefStr, PartialEq, Clone, Copy)]
+enum TeleCategory {
+    None = 0,
+    Imu,
+    Attitude,
+    Pid,
+    Mix,
+    Dshot,
+}
 
 #[derive(Debug, Clone)]
 struct SensorData {
-    values: [f64; VALS_PER_LINE],
+    values: Vec<f64>,
 }
 
 struct PlotterApp {
-    data_history: [ConstGenericRingBuffer<f64, MAX_HISTORY_LEN>; VALS_PER_LINE],
+    data_history: Vec<ConstGenericRingBuffer<f64, MAX_HISTORY_LEN>>,
     lines_count: usize,
     data_receiver: Receiver<SensorData>,
     last_update_time: Instant,
     lines_since_update: usize,
     line_rate: f64,
+    tele_mode: TeleCategory,
 }
 
 impl PlotterApp {
     fn new(data_receiver: Receiver<SensorData>) -> Self {
-        Self {
-            data_history: [const { ConstGenericRingBuffer::<f64, MAX_HISTORY_LEN>::new() };
-                VALS_PER_LINE],
+        let mut app = Self {
+            data_history: Vec::new(),
             lines_count: 0,
             data_receiver,
             last_update_time: Instant::now(),
             lines_since_update: 0,
             line_rate: 0.0,
+            tele_mode: TeleCategory::None,
+        };
+        app.apply_mode();
+        app
+    }
+
+    fn mode_to_dim(mode: TeleCategory) -> usize {
+        match mode {
+            TeleCategory::None => 0,
+            TeleCategory::Imu => 9,
+            TeleCategory::Attitude => 3,
+            TeleCategory::Pid => 4,
+            TeleCategory::Mix => 4,
+            TeleCategory::Dshot => 4,
         }
+    }
+
+    fn mode_to_labels(mode: TeleCategory) -> Vec<&'static str> {
+        match mode {
+            TeleCategory::None => Vec::new(),
+            TeleCategory::Imu => vec![
+                "gyr(x)", "gyr(y)", "gyr(z)", "acc(x)", "acc(y)", "acc(z)", "mag(x)", "mag(y)",
+                "mag(z)",
+            ],
+            TeleCategory::Attitude => vec!["roll", "pitch", "yaw"],
+            TeleCategory::Pid => vec!["throttle", "roll", "pitch", "yaw"],
+            TeleCategory::Mix => vec!["M1", "M2", "M3", "M4"],
+            TeleCategory::Dshot => vec!["M1", "M2", "M3", "M4"],
+        }
+    }
+
+    fn apply_mode(&mut self) {
+        let new_dim = Self::mode_to_dim(self.tele_mode);
+        VALS_PER_LINE.store(new_dim, Ordering::Release);
+        self.data_history = vec![ConstGenericRingBuffer::new(); new_dim];
+        println!("{}", self.tele_mode.as_ref());
+        io::stdout().flush().expect("Failed to flush stdout");
     }
 }
 
@@ -81,7 +108,7 @@ impl eframe::App for PlotterApp {
 
         while let Ok(new_data) = self.data_receiver.try_recv() {
             self.lines_count += 1;
-            for i in 0..VALS_PER_LINE {
+            for i in 0..VALS_PER_LINE.load(Ordering::Acquire) {
                 self.data_history[i].enqueue(new_data.values[i]);
             }
             self.lines_since_update += 1;
@@ -99,7 +126,26 @@ impl eframe::App for PlotterApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading(format!("Data Stream Rate: {:.2} lines/sec", self.line_rate));
+            ui.horizontal(|ui| {
+                ui.heading(format!("Data Stream Rate: {:.2} lines/sec", self.line_rate));
+                ui.add_space(ui.available_width() - 100.0);
+                egui::ComboBox::from_label("")
+                    .selected_text(self.tele_mode.as_ref())
+                    .show_ui(ui, |ui| {
+                        for option in TeleCategory::iter() {
+                            if ui
+                                .selectable_value(
+                                    &mut self.tele_mode,
+                                    option.clone(),
+                                    option.as_ref(),
+                                )
+                                .clicked()
+                            {
+                                self.apply_mode();
+                            }
+                        }
+                    });
+            });
             ui.separator();
             ui.add_space(5.0);
 
@@ -111,9 +157,10 @@ impl eframe::App for PlotterApp {
                 let min_x = (self.lines_count as f64 - MAX_HISTORY_LEN as f64).max(0.0);
                 let max_x = self.lines_count as f64;
 
+                let has_data = !self.data_history.is_empty() && !self.data_history[0].is_empty();
                 // Determine Y-axis range for auto-scaling.
-                let mut min_y = f64::MAX;
-                let mut max_y = f64::MIN;
+                let mut min_y = if has_data { f64::MAX } else { 0.0 };
+                let mut max_y = if has_data { f64::MIN } else { 0.0 };
                 for series_data in &self.data_history {
                     for &val in series_data.iter() {
                         min_y = min_y.min(val);
@@ -130,6 +177,7 @@ impl eframe::App for PlotterApp {
 
                 chart.configure_mesh().draw().unwrap();
 
+                let labels = Self::mode_to_labels(self.tele_mode);
                 for (i, series_data) in self.data_history.iter().enumerate() {
                     let series_points: Vec<(f64, f64)> = series_data
                         .iter()
@@ -140,7 +188,7 @@ impl eframe::App for PlotterApp {
                     chart
                         .draw_series(LineSeries::new(series_points, COLORS[i].filled()))
                         .unwrap()
-                        .label(LABELS[i])
+                        .label(labels[i])
                         .legend(move |(x, y)| {
                             PathElement::new(vec![(x, y), (x + 20, y)], COLORS[i].filled())
                         });
@@ -173,21 +221,16 @@ fn stdin_reader_thread(sender: Sender<SensorData>) {
                     })
                     .collect();
 
-                if values.len() == VALS_PER_LINE {
-                    let mut sensor_data = SensorData {
-                        values: [0.0; VALS_PER_LINE],
-                    };
-                    for (i, &val) in values.iter().enumerate() {
-                        sensor_data.values[i] = val;
-                    }
+                if values.len() == VALS_PER_LINE.load(Ordering::Acquire) {
+                    let sensor_data = SensorData { values };
                     if let Err(e) = sender.send(sensor_data) {
                         eprintln!("Failed to send data to GUI thread: {}", e);
                         break;
                     }
-                } else {
+                } else if VALS_PER_LINE.load(Ordering::Acquire) != 0 {
                     eprintln!(
                         "Skipping line with unexpected number of values (expected {}, got {}): '{}'",
-                        VALS_PER_LINE,
+                        VALS_PER_LINE.load(Ordering::Acquire),
                         values.len(),
                         line
                     );
