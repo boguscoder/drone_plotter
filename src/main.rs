@@ -134,11 +134,7 @@ impl eframe::App for PlotterApp {
                     .show_ui(ui, |ui| {
                         for option in TeleCategory::iter() {
                             if ui
-                                .selectable_value(
-                                    &mut self.tele_mode,
-                                    option.clone(),
-                                    option.as_ref(),
-                                )
+                                .selectable_value(&mut self.tele_mode, option, option.as_ref())
                                 .clicked()
                             {
                                 self.apply_mode();
