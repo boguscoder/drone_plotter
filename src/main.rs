@@ -1,13 +1,20 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 use crossbeam_channel::{Receiver, Sender, unbounded};
+
 use eframe::egui;
-use egui::ViewportBuilder;
+
+use egui::{CentralPanel, ScrollArea, containers::TopBottomPanel};
+use egui::{Color32, ViewportBuilder};
 use egui_plotter::EguiBackend;
+
 use plotters::prelude::full_palette::*;
 use plotters::prelude::*;
+
 use ringbuffer::{ConstGenericRingBuffer, RingBuffer};
+
 use std::io::{self, BufRead, BufReader, Write};
 use std::time::{Duration, Instant};
+
 use strum::IntoEnumIterator;
 use strum_macros::{AsRefStr, EnumIter};
 
@@ -26,6 +33,7 @@ const COLORS: [plotters::style::RGBColor; 9] = [
 ];
 
 const MAX_HISTORY_LEN: usize = 512;
+const MAX_MSGS: usize = 16;
 
 // TODO: keep in sync with simplest_drone, move to shared crate one day
 #[derive(Debug, EnumIter, AsRefStr, PartialEq, Clone, Copy)]
@@ -45,8 +53,10 @@ struct SensorData {
 
 struct PlotterApp {
     data_history: Vec<ConstGenericRingBuffer<f64, MAX_HISTORY_LEN>>,
+    msg_history: ConstGenericRingBuffer<String, MAX_MSGS>,
     lines_count: usize,
     data_receiver: Receiver<SensorData>,
+    msg_receiver: Receiver<String>,
     last_update_time: Instant,
     lines_since_update: usize,
     line_rate: f64,
@@ -54,11 +64,13 @@ struct PlotterApp {
 }
 
 impl PlotterApp {
-    fn new(data_receiver: Receiver<SensorData>) -> Self {
+    fn new(data_receiver: Receiver<SensorData>, msg_receiver: Receiver<String>) -> Self {
         let mut app = Self {
             data_history: Vec::new(),
+            msg_history: ConstGenericRingBuffer::default(),
             lines_count: 0,
             data_receiver,
+            msg_receiver,
             last_update_time: Instant::now(),
             lines_since_update: 0,
             line_rate: 0.0,
@@ -122,10 +134,10 @@ impl eframe::App for PlotterApp {
             self.line_rate = self.lines_since_update as f64 / elapsed_time.as_secs_f64();
             self.lines_since_update = 0;
             self.last_update_time = now;
-            ctx.request_repaint();
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        TopBottomPanel::top("mode_panel").show(ctx, |ui| {
+            ui.add_space(2.0);
             ui.horizontal(|ui| {
                 ui.heading(format!("Data Stream Rate: {:.2} lines/sec", self.line_rate));
                 ui.add_space(ui.available_width() - 100.0);
@@ -142,61 +154,88 @@ impl eframe::App for PlotterApp {
                         }
                     });
             });
-            ui.separator();
-            ui.add_space(5.0);
-
-            egui::Frame::canvas(ui.style()).show(ui, |ui_plot| {
-                let root = EguiBackend::new(ui_plot).into_drawing_area();
-                root.fill(&BLUEGREY_700).unwrap();
-
-                // Define X-axis range (based on sample count).
-                let min_x = (self.lines_count as f64 - MAX_HISTORY_LEN as f64).max(0.0);
-                let max_x = self.lines_count as f64;
-
-                let has_data = !self.data_history.is_empty() && !self.data_history[0].is_empty();
-                // Determine Y-axis range for auto-scaling.
-                let mut min_y = if has_data { f64::MAX } else { 0.0 };
-                let mut max_y = if has_data { f64::MIN } else { 0.0 };
-                for series_data in &self.data_history {
-                    for &val in series_data.iter() {
-                        min_y = min_y.min(val);
-                        max_y = max_y.max(val);
-                    }
-                }
-
-                let mut chart = ChartBuilder::on(&root)
-                    .margin(10)
-                    .x_label_area_size(30)
-                    .y_label_area_size(40)
-                    .build_cartesian_2d(min_x..max_x, min_y..max_y)
-                    .unwrap();
-
-                chart.configure_mesh().draw().unwrap();
-
-                let labels = Self::mode_to_labels(self.tele_mode);
-                for (i, series_data) in self.data_history.iter().enumerate() {
-                    let series_points: Vec<(f64, f64)> = series_data
-                        .iter()
-                        .enumerate()
-                        .map(|(j, &val)| ((self.lines_count - series_data.len() + j) as f64, val))
-                        .collect();
-
-                    chart
-                        .draw_series(LineSeries::new(series_points, COLORS[i].filled()))
-                        .unwrap()
-                        .label(labels[i])
-                        .legend(move |(x, y)| {
-                            PathElement::new(vec![(x, y), (x + 20, y)], COLORS[i].filled())
-                        });
-                }
-
-                chart.configure_series_labels().draw().unwrap();
-            });
+            ui.add_space(2.0);
         });
+
+        TopBottomPanel::bottom("msg_panel").show(ctx, |ui| {
+            ui.add_space(5.0);
+            self.msg_history.extend(self.msg_receiver.try_iter());
+            if !self.msg_history.is_empty() {
+                ScrollArea::vertical()
+                    .max_width(f32::INFINITY)
+                    .auto_shrink(false)
+                    .max_height(50.0)
+                    .show(ui, |ui| {
+                        for msg in self.msg_history.iter() {
+                            ui.label(egui::RichText::new(msg).color(egui::Color32::RED));
+                        }
+                    });
+            } else {
+                ui.label("No messages.");
+            }
+            ui.add_space(5.0);
+        });
+
+        CentralPanel::default().show(ctx, |ui| {
+            egui::Frame::canvas(ui.style())
+                .fill(Color32::from_white_alpha(0))
+                .stroke(egui::Stroke::NONE)
+                .show(ui, |ui_plot| {
+                    let root = EguiBackend::new(ui_plot).into_drawing_area();
+                    root.fill(&BLUEGREY_700).unwrap();
+
+                    // Define X-axis range (based on sample count).
+                    let min_x = (self.lines_count as f64 - MAX_HISTORY_LEN as f64).max(0.0);
+                    let max_x = self.lines_count as f64;
+
+                    let has_data =
+                        !self.data_history.is_empty() && !self.data_history[0].is_empty();
+                    // Determine Y-axis range for auto-scaling.
+                    let mut min_y = if has_data { f64::MAX } else { 0.0 };
+                    let mut max_y = if has_data { f64::MIN } else { 0.0 };
+                    for series_data in &self.data_history {
+                        for &val in series_data.iter() {
+                            min_y = min_y.min(val);
+                            max_y = max_y.max(val);
+                        }
+                    }
+
+                    let mut chart = ChartBuilder::on(&root)
+                        .x_label_area_size(30)
+                        .y_label_area_size(40)
+                        .build_cartesian_2d(min_x..max_x, min_y..max_y)
+                        .unwrap();
+
+                    chart.configure_mesh().draw().unwrap();
+
+                    let labels = Self::mode_to_labels(self.tele_mode);
+                    for (i, series_data) in self.data_history.iter().enumerate() {
+                        let series_points: Vec<(f64, f64)> = series_data
+                            .iter()
+                            .enumerate()
+                            .map(|(j, &val)| {
+                                ((self.lines_count - series_data.len() + j) as f64, val)
+                            })
+                            .collect();
+
+                        chart
+                            .draw_series(LineSeries::new(series_points, COLORS[i].filled()))
+                            .unwrap()
+                            .label(labels[i])
+                            .legend(move |(x, y)| {
+                                PathElement::new(vec![(x, y), (x + 20, y)], COLORS[i].filled())
+                            });
+                    }
+
+                    chart.configure_series_labels().draw().unwrap();
+                });
+        });
+
+        ctx.request_repaint();
     }
 }
 
-fn stdin_reader_thread(sender: Sender<SensorData>) {
+fn stdin_reader_thread(sender: Sender<SensorData>, msgs: Sender<String>) {
     let stdin = io::stdin();
     let reader = BufReader::new(stdin.lock());
 
@@ -210,7 +249,8 @@ fn stdin_reader_thread(sender: Sender<SensorData>) {
                             if val.is_finite() {
                                 Some(val)
                             } else {
-                                eprintln!("Skipping non-finite value: {}", s);
+                                msgs.send(format!("Skipping non-finite value: {}", s))
+                                    .unwrap();
                                 None
                             }
                         })
@@ -219,26 +259,26 @@ fn stdin_reader_thread(sender: Sender<SensorData>) {
 
                 if values.len() == VALS_PER_LINE.load(Ordering::Acquire) {
                     let sensor_data = SensorData { values };
-                    if let Err(e) = sender.send(sensor_data) {
-                        eprintln!("Failed to send data to GUI thread: {}", e);
-                        break;
-                    }
+                    sender.send(sensor_data).unwrap();
+                    break;
                 } else if VALS_PER_LINE.load(Ordering::Acquire) != 0 {
-                    eprintln!(
+                    msgs.send(format!(
                         "Skipping line with unexpected number of values (expected {}, got {}): '{}'",
                         VALS_PER_LINE.load(Ordering::Acquire),
                         values.len(),
                         line
-                    );
+                    )).unwrap();
                 }
             }
             Err(e) => {
-                eprintln!("Error reading from stdin: {}", e);
+                msgs.send(format!("Error reading from stdin: {}", e))
+                    .unwrap();
                 break;
             }
         }
     }
-    println!("Standard input reader thread exiting.");
+    msgs.send("Standard input reader thread exiting.".to_string())
+        .unwrap();
 }
 
 fn main() -> eframe::Result {
@@ -249,15 +289,15 @@ fn main() -> eframe::Result {
     };
 
     let (tx, rx) = unbounded::<SensorData>();
-    let sender_for_thread = tx.clone();
+    let (etx, erx) = unbounded::<String>();
 
     std::thread::spawn(move || {
-        stdin_reader_thread(sender_for_thread);
+        stdin_reader_thread(tx, etx);
     });
 
     eframe::run_native(
         "Drone Stream Plotter",
         options,
-        Box::new(move |_cc| Ok(Box::new(PlotterApp::new(rx)))),
+        Box::new(move |_cc| Ok(Box::new(PlotterApp::new(rx, erx)))),
     )
 }
