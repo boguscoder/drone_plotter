@@ -260,7 +260,6 @@ fn stdin_reader_thread(sender: Sender<SensorData>, msgs: Sender<String>) {
                 if values.len() == VALS_PER_LINE.load(Ordering::Acquire) {
                     let sensor_data = SensorData { values };
                     sender.send(sensor_data).unwrap();
-                    break;
                 } else if VALS_PER_LINE.load(Ordering::Acquire) != 0 {
                     msgs.send(format!(
                         "Skipping line with unexpected number of values (expected {}, got {}): '{}'",
