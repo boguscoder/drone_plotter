@@ -14,5 +14,6 @@ plotters = { version = "0.3.7", features = ["full_palette"] }
 
 ringbuffer = "0.15.0"
 
+serialport = "4.7.2"
 strum = "0.27.1"
 strum_macros = "0.27.1"
