@@ -118,9 +118,7 @@ impl PlotterApp {
         let new_dim = Self::mode_to_dim(self.tele_mode);
         VALS_PER_LINE.store(new_dim, Ordering::Release);
         self.data_history = vec![ConstGenericRingBuffer::new(); new_dim];
-        self.tele_port
-            .write_all(format!("{}\n", self.tele_mode as u8).as_bytes())
-            .unwrap();
+        self.tele_port.write_all(&[self.tele_mode as u8]).unwrap();
     }
 }
 
