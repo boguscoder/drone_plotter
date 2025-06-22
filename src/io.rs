@@ -58,13 +58,14 @@ pub fn input_thread(data_channel: Sender<SensorData>, msg_channel: Sender<String
                     })
                     .collect();
 
-                if values.len() == VALS_PER_LINE.load(Ordering::Acquire) {
+                let val_num = VALS_PER_LINE.load(Ordering::Acquire);
+                if values.len() == val_num {
                     let sensor_data = SensorData { values };
                     data_channel.send(sensor_data).unwrap();
-                } else if VALS_PER_LINE.load(Ordering::Acquire) != 0 {
+                } else if val_num != 0 {
                     msg_channel.send(format!(
                         "Skipping line with unexpected number of values (expected {}, got {}): '{}'",
-                        VALS_PER_LINE.load(Ordering::Acquire),
+                        val_num,
                         values.len(),
                         line
                     )).unwrap();
