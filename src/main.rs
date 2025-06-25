@@ -18,15 +18,15 @@ mod io;
 static VALS_PER_LINE: AtomicUsize = AtomicUsize::new(0);
 
 const COLORS: [plotters::style::RGBColor; 9] = [
-    RGBColor(141, 215, 242),
-    RGBColor(78, 205, 196),
-    RGBColor(179, 157, 219),
-    RGBColor(255, 224, 102),
-    RGBColor(255, 168, 0),
-    RGBColor(255, 107, 107),
-    RGBColor(167, 242, 110),
-    RGBColor(255, 128, 237),
-    RGBColor(128, 222, 234),
+    RGBColor(255, 0, 0),     // Bright Red
+    RGBColor(0, 255, 0),     // Lawn Green
+    RGBColor(100, 170, 255), // Sky Blue
+    RGBColor(255, 255, 0),   // Sunny Yellow
+    RGBColor(255, 160, 0),   // Bright Orange
+    RGBColor(200, 100, 255), // Bright Lavender
+    RGBColor(0, 255, 255),   // Electric Cyan
+    RGBColor(255, 128, 237), // Hot Pink
+    RGBColor(255, 255, 255), // Pure White
 ];
 
 const MAX_HISTORY_LEN: usize = 512;
