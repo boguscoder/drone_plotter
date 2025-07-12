@@ -92,7 +92,7 @@ impl PlotterApp {
     fn mode_to_dim(mode: TeleCategory) -> usize {
         match mode {
             TeleCategory::None => 0,
-            TeleCategory::Imu => 9,
+            TeleCategory::Imu => 6,
             TeleCategory::Attitude => 3,
             TeleCategory::Pid => 4,
             TeleCategory::Mix => 4,
@@ -103,10 +103,7 @@ impl PlotterApp {
     fn mode_to_labels(mode: TeleCategory) -> Vec<&'static str> {
         match mode {
             TeleCategory::None => Vec::new(),
-            TeleCategory::Imu => vec![
-                "gyr(x)", "gyr(y)", "gyr(z)", "acc(x)", "acc(y)", "acc(z)", "mag(x)", "mag(y)",
-                "mag(z)",
-            ],
+            TeleCategory::Imu => vec!["gyr(x)", "gyr(y)", "gyr(z)", "acc(x)", "acc(y)", "acc(z)"],
             TeleCategory::Attitude => vec!["roll", "pitch", "yaw"],
             TeleCategory::Pid => vec!["throttle", "roll", "pitch", "yaw"],
             TeleCategory::Mix => vec!["M1", "M2", "M3", "M4"],
