@@ -40,38 +40,35 @@ pub fn input_thread(data_channel: Sender<SensorData>, msg_channel: Sender<String
     let reader = BufReader::new(log_port.as_mut());
 
     for line_result in reader.lines() {
-        match line_result {
-            Ok(line) => {
-                let values: Vec<f64> = line
-                    .split(',')
-                    .filter_map(|s| {
-                        s.parse().ok().and_then(|val: f64| {
-                            if val.is_finite() {
-                                Some(val)
-                            } else {
-                                msg_channel
-                                    .send(format!("Skipping non-finite value: {}", s))
-                                    .unwrap();
-                                None
-                            }
-                        })
+        if let Ok(line) = line_result {
+            let values: Vec<f64> = line
+                .split(',')
+                .filter_map(|s| {
+                    s.parse().ok().and_then(|val: f64| {
+                        if val.is_finite() {
+                            Some(val)
+                        } else {
+                            msg_channel
+                                .send(format!("Skipping non-finite value: {}", s))
+                                .unwrap();
+                            None
+                        }
                     })
-                    .collect();
+                })
+                .collect();
 
-                let val_num = VALS_PER_LINE.load(Ordering::Acquire);
-                if values.len() == val_num {
-                    let sensor_data = SensorData { values };
-                    data_channel.send(sensor_data).unwrap();
-                } else if val_num != 0 {
-                    msg_channel.send(format!(
-                        "Skipping line with unexpected number of values (expected {}, got {}): '{}'",
-                        val_num,
-                        values.len(),
-                        line
-                    )).unwrap();
-                }
+            let val_num = VALS_PER_LINE.load(Ordering::Acquire);
+            if values.len() == val_num {
+                let sensor_data = SensorData { values };
+                data_channel.send(sensor_data).unwrap();
+            } else if val_num != 0 {
+                msg_channel.send(format!(
+                    "Skipping line with unexpected number of values (expected {}, got {}): '{}'",
+                    val_num,
+                    values.len(),
+                    line
+                )).unwrap();
             }
-            Err(_) => {}
         }
     }
     msg_channel
