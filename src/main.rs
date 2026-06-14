@@ -122,6 +122,7 @@ impl PlotterApp {
 impl eframe::App for PlotterApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let now = Instant::now();
+        let mut updated = false;
 
         while let Ok(new_data) = self.data_receiver.try_recv() {
             let vals = VALS_PER_LINE.load(Ordering::Acquire);
@@ -131,6 +132,7 @@ impl eframe::App for PlotterApp {
                     self.data_history[i].enqueue(new_data.values[i]);
                 }
                 self.stats.lines_since_update += 1;
+                updated = true;
             }
         }
 
@@ -170,7 +172,11 @@ impl eframe::App for PlotterApp {
 
         TopBottomPanel::bottom("msg_panel").show(ctx, |ui| {
             ui.add_space(5.0);
+            let prev_msg_len = self.msg_history.len();
             self.msg_history.extend(self.msg_receiver.try_iter());
+            if self.msg_history.len() > prev_msg_len {
+                updated = true;
+            }
             if !self.msg_history.is_empty() {
                 ScrollArea::vertical()
                     .max_width(f32::INFINITY)
@@ -221,13 +227,12 @@ impl eframe::App for PlotterApp {
 
                     let labels = Self::mode_to_labels(self.tele_mode);
                     for (i, series_data) in self.data_history.iter().enumerate() {
-                        let series_points: Vec<(f64, f64)> = series_data
+                        let series_points = series_data
                             .iter()
                             .enumerate()
                             .map(|(j, &val)| {
                                 ((self.stats.lines_count - series_data.len() + j) as f64, val)
-                            })
-                            .collect();
+                            });
 
                         chart
                             .draw_series(LineSeries::new(series_points, COLORS[i].filled()))
@@ -242,7 +247,9 @@ impl eframe::App for PlotterApp {
                 });
         });
 
-        ctx.request_repaint();
+        if updated {
+            ctx.request_repaint();
+        }
     }
 }
 
