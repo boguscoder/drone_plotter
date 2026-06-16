@@ -262,10 +262,11 @@ fn main() -> eframe::Result {
 
     let (tx, rx) = unbounded::<SensorData>();
     let (etx, erx) = unbounded::<String>();
+    let (repaint_tx, repaint_rx) = unbounded::<()>();
 
-    std::thread::spawn(move || {
-        io::input_thread(tx, etx);
-    });
+    io::start_input_threads(move || {
+        let _ = repaint_tx.send(());
+    }, tx, etx);
 
     let tele_port = match io::open_out_port() {
         Ok(port) => port,
@@ -277,6 +278,14 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Drone Stream Plotter",
         options,
-        Box::new(move |_cc| Ok(Box::new(PlotterApp::new(rx, erx, tele_port)))),
+        Box::new(move |cc| {
+            let ctx = cc.egui_ctx.clone();
+            std::thread::spawn(move || {
+                while repaint_rx.recv().is_ok() {
+                    ctx.request_repaint();
+                }
+            });
+            Ok(Box::new(PlotterApp::new(rx, erx, tele_port)))
+        }),
     )
 }
