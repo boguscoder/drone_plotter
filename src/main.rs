@@ -49,10 +49,10 @@ struct SensorData {
 }
 
 struct Stats {
-    lines_count: usize,
+    msg_count: usize,
     last_update_time: Instant,
-    lines_since_update: usize,
-    line_rate: f64,
+    msg_since_update: usize,
+    msg_rate: f64,
 }
 
 struct PlotterApp {
@@ -79,10 +79,10 @@ impl PlotterApp {
             tele_mode: TeleCategory::None,
             tele_port,
             stats: Stats {
-                lines_count: 0,
+                msg_count: 0,
                 last_update_time: Instant::now(),
-                lines_since_update: 0,
-                line_rate: 0.0,
+                msg_since_update: 0,
+                msg_rate: 0.0,
             },
         };
         app.apply_mode();
@@ -127,11 +127,11 @@ impl eframe::App for PlotterApp {
         while let Ok(new_data) = self.data_receiver.try_recv() {
             let vals = VALS_PER_LINE.load(Ordering::Acquire);
             if vals > 0 {
-                self.stats.lines_count += 1;
+                self.stats.msg_count += 1;
                 for i in 0..vals {
                     self.data_history[i].enqueue(new_data.values[i]);
                 }
-                self.stats.lines_since_update += 1;
+                self.stats.msg_since_update += 1;
                 updated = true;
             }
         }
@@ -140,9 +140,8 @@ impl eframe::App for PlotterApp {
         const RATE_UPDATE_INTERVAL: Duration = Duration::from_secs(1);
 
         if elapsed_time >= RATE_UPDATE_INTERVAL {
-            self.stats.line_rate =
-                self.stats.lines_since_update as f64 / elapsed_time.as_secs_f64();
-            self.stats.lines_since_update = 0;
+            self.stats.msg_rate = self.stats.msg_since_update as f64 / elapsed_time.as_secs_f64();
+            self.stats.msg_since_update = 0;
             self.stats.last_update_time = now;
         }
 
@@ -150,8 +149,8 @@ impl eframe::App for PlotterApp {
             ui.add_space(2.0);
             ui.horizontal(|ui| {
                 ui.heading(format!(
-                    "Data Stream Rate: {:.2} lines/sec",
-                    self.stats.line_rate
+                    "Data Stream Rate: {:.2} msg/sec",
+                    self.stats.msg_rate
                 ));
                 ui.add_space(ui.available_width() - 100.0);
                 egui::ComboBox::from_label("")
@@ -202,8 +201,8 @@ impl eframe::App for PlotterApp {
                     root.fill(&BLUEGREY_700).unwrap();
 
                     // Define X-axis range (based on sample count).
-                    let min_x = (self.stats.lines_count as f64 - MAX_HISTORY_LEN as f64).max(0.0);
-                    let max_x = self.stats.lines_count as f64;
+                    let min_x = (self.stats.msg_count as f64 - MAX_HISTORY_LEN as f64).max(0.0);
+                    let max_x = self.stats.msg_count as f64;
 
                     let has_data =
                         !self.data_history.is_empty() && !self.data_history[0].is_empty();
@@ -227,12 +226,9 @@ impl eframe::App for PlotterApp {
 
                     let labels = Self::mode_to_labels(self.tele_mode);
                     for (i, series_data) in self.data_history.iter().enumerate() {
-                        let series_points = series_data
-                            .iter()
-                            .enumerate()
-                            .map(|(j, &val)| {
-                                ((self.stats.lines_count - series_data.len() + j) as f64, val)
-                            });
+                        let series_points = series_data.iter().enumerate().map(|(j, &val)| {
+                            ((self.stats.msg_count - series_data.len() + j) as f64, val)
+                        });
 
                         chart
                             .draw_series(LineSeries::new(series_points, COLORS[i].filled()))
@@ -264,9 +260,13 @@ fn main() -> eframe::Result {
     let (etx, erx) = unbounded::<String>();
     let (repaint_tx, repaint_rx) = unbounded::<()>();
 
-    io::start_input_threads(move || {
-        let _ = repaint_tx.send(());
-    }, tx, etx);
+    io::start_input_threads(
+        move || {
+            let _ = repaint_tx.send(());
+        },
+        tx,
+        etx,
+    );
 
     let tele_port = match io::open_out_port() {
         Ok(port) => port,
