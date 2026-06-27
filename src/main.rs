@@ -37,6 +37,7 @@ const MAX_MSGS: usize = 16;
 enum TeleCategory {
     None = 0,
     Imu,
+    Rc,
     Attitude,
     Pid,
     Mix,
@@ -92,6 +93,7 @@ impl PlotterApp {
     fn mode_to_dim(mode: TeleCategory) -> usize {
         match mode {
             TeleCategory::None => 0,
+            TeleCategory::Rc => 6,
             TeleCategory::Imu => 6,
             TeleCategory::Attitude => 3,
             TeleCategory::Pid => 4,
@@ -103,6 +105,7 @@ impl PlotterApp {
     fn mode_to_labels(mode: TeleCategory) -> Vec<&'static str> {
         match mode {
             TeleCategory::None => Vec::new(),
+            TeleCategory::Rc => vec!["Roll", "Pitch", "Throttle", "Yaw", "Gain", "Arming"],
             TeleCategory::Imu => vec!["gyr(x)", "gyr(y)", "gyr(z)", "acc(x)", "acc(y)", "acc(z)"],
             TeleCategory::Attitude => vec!["roll", "pitch", "yaw"],
             TeleCategory::Pid => vec!["throttle", "roll", "pitch", "yaw"],
