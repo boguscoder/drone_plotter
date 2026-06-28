@@ -221,7 +221,7 @@ impl eframe::App for PlotterApp {
 
                     let mut chart = ChartBuilder::on(&root)
                         .x_label_area_size(30)
-                        .y_label_area_size(40)
+                        .y_label_area_size(50)
                         .build_cartesian_2d(min_x..max_x, min_y..max_y)
                         .unwrap();
 
