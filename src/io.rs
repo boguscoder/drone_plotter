@@ -7,8 +7,8 @@ use std::time::Duration;
 use crate::SensorData;
 use crate::VALS_PER_LINE;
 
-const IN_PORT_PATH: &str = "/dev/tty.usbmodem0xBABECAFE1";
-const OUT_PORT_PATH: &str = "/dev/tty.usbmodem0xBABECAFE3";
+const IN_PORT_PATH: &str = "/dev/cu.usbmodem0xBABECAFE1";
+const OUT_PORT_PATH: &str = "/dev/cu.usbmodem0xBABECAFE3";
 
 const BAUD_RATE: u32 = 115200;
 
