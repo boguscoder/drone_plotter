@@ -1,5 +1,5 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
-use crossbeam_channel::{Receiver, unbounded};
+use crossbeam_channel::{Receiver, Sender, unbounded};
 use eframe::egui;
 use egui::{CentralPanel, ScrollArea, containers::TopBottomPanel};
 use egui::{Color32, ViewportBuilder};
@@ -7,11 +7,8 @@ use egui_plotter::EguiBackend;
 use plotters::prelude::full_palette::*;
 use plotters::prelude::*;
 use ringbuffer::{ConstGenericRingBuffer, RingBuffer};
-use serialport::SerialPort;
-use std::io::Write;
 use std::time::{Duration, Instant};
 use strum::IntoEnumIterator;
-use strum_macros::{AsRefStr, EnumIter};
 
 mod io;
 
@@ -32,17 +29,7 @@ const COLORS: [plotters::style::RGBColor; 9] = [
 const MAX_HISTORY_LEN: usize = 512;
 const MAX_MSGS: usize = 16;
 
-// TODO: keep in sync with simplest_drone, move to shared crate one day
-#[derive(Debug, EnumIter, AsRefStr, PartialEq, Clone, Copy)]
-enum TeleCategory {
-    None = 0,
-    Imu,
-    Rc,
-    Attitude,
-    Pid,
-    Mix,
-    Dshot,
-}
+use io::TeleCategory;
 
 #[derive(Debug, Clone)]
 struct SensorData {
@@ -62,7 +49,7 @@ struct PlotterApp {
     data_receiver: Receiver<SensorData>,
     msg_receiver: Receiver<String>,
     tele_mode: TeleCategory,
-    tele_port: Box<dyn SerialPort>,
+    cmd_sender: Sender<TeleCategory>,
     stats: Stats,
 }
 
@@ -70,7 +57,7 @@ impl PlotterApp {
     fn new(
         data_receiver: Receiver<SensorData>,
         msg_receiver: Receiver<String>,
-        tele_port: Box<dyn SerialPort>,
+        cmd_sender: Sender<TeleCategory>,
     ) -> Self {
         let mut app = Self {
             data_history: Vec::new(),
@@ -78,7 +65,7 @@ impl PlotterApp {
             data_receiver,
             msg_receiver,
             tele_mode: TeleCategory::None,
-            tele_port,
+            cmd_sender,
             stats: Stats {
                 msg_count: 0,
                 last_update_time: Instant::now(),
@@ -118,7 +105,7 @@ impl PlotterApp {
         let new_dim = Self::mode_to_dim(self.tele_mode);
         VALS_PER_LINE.store(new_dim, Ordering::Release);
         self.data_history = vec![ConstGenericRingBuffer::new(); new_dim];
-        self.tele_port.write_all(&[self.tele_mode as u8]).unwrap();
+        self.cmd_sender.send(self.tele_mode).unwrap();
     }
 }
 
@@ -262,6 +249,7 @@ fn main() -> eframe::Result {
     let (tx, rx) = unbounded::<SensorData>();
     let (etx, erx) = unbounded::<String>();
     let (repaint_tx, repaint_rx) = unbounded::<()>();
+    let (cmd_tx, cmd_rx) = unbounded::<TeleCategory>();
 
     io::start_input_threads(
         move || {
@@ -269,14 +257,8 @@ fn main() -> eframe::Result {
         },
         tx,
         etx,
+        cmd_rx,
     );
-
-    let tele_port = match io::open_out_port() {
-        Ok(port) => port,
-        Err(e) => {
-            return eframe::Result::Err(eframe::Error::AppCreation(Box::new(e)));
-        }
-    };
 
     eframe::run_native(
         "Drone Stream Plotter",
@@ -288,7 +270,7 @@ fn main() -> eframe::Result {
                     ctx.request_repaint();
                 }
             });
-            Ok(Box::new(PlotterApp::new(rx, erx, tele_port)))
+            Ok(Box::new(PlotterApp::new(rx, erx, cmd_tx)))
         }),
     )
 }

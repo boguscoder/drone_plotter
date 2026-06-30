@@ -1,8 +1,21 @@
 use core::sync::atomic::Ordering;
-use crossbeam_channel::Sender;
+use crossbeam_channel::{Receiver, Sender};
 use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::time::Duration;
+
+use strum_macros::{AsRefStr, EnumIter};
+
+#[derive(Debug, EnumIter, AsRefStr, PartialEq, Clone, Copy)]
+pub enum TeleCategory {
+    None = 0,
+    Imu,
+    Rc,
+    Attitude,
+    Pid,
+    Mix,
+    Dshot,
+}
 
 use crate::SensorData;
 use crate::VALS_PER_LINE;
@@ -22,14 +35,11 @@ fn open_serial_port(port_path: &str) -> serialport::Result<Box<dyn SerialPort>> 
         .open()
 }
 
-pub fn open_out_port() -> serialport::Result<Box<dyn SerialPort>> {
-    open_serial_port(OUT_PORT_PATH)
-}
-
 pub fn start_input_threads<F>(
     repaint_fn: F,
     data_channel: Sender<SensorData>,
     msg_channel: Sender<String>,
+    cmd_channel: Receiver<TeleCategory>,
 ) where
     F: Fn() + Send + Sync + 'static,
 {
@@ -53,15 +63,26 @@ pub fn start_input_threads<F>(
 
     // Handle binary telemetry from the app port in the main input thread
     std::thread::spawn(move || {
+        let mut last_mode = TeleCategory::None;
         loop {
             if let Ok(mut port) = open_serial_port(OUT_PORT_PATH) {
+                // Send last known mode immediately on reconnect
+                port.write_all(&[last_mode as u8]).unwrap();
+
                 let mut buf = [0u8; 1024];
                 let mut state = 0; // 0: Idle, 1: NeedLen, 2: Collecting
                 let mut frame = [0u8; 26];
                 let mut pos = 0;
 
                 loop {
-                    match port.as_mut().read(&mut buf) {
+                    while let Ok(mode) = cmd_channel.try_recv() {
+                        last_mode = mode;
+                        if port.write_all(&[last_mode as u8]).is_err() {
+                            break;
+                        }
+                    }
+
+                    match port.read(&mut buf) {
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
                             let val_num = VALS_PER_LINE.load(Ordering::Acquire);
