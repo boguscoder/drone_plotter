@@ -45,12 +45,13 @@ struct Stats {
 
 struct PlotterApp {
     data_history: Vec<ConstGenericRingBuffer<f64, MAX_HISTORY_LEN>>,
-    msg_history: ConstGenericRingBuffer<String, MAX_MSGS>,
+    msg_history: ConstGenericRingBuffer<(usize, String), MAX_MSGS>,
     data_receiver: Receiver<SensorData>,
     msg_receiver: Receiver<String>,
     tele_mode: TeleCategory,
     cmd_sender: Sender<TeleCategory>,
     stats: Stats,
+    msg_total_count: usize,
 }
 
 impl PlotterApp {
@@ -72,6 +73,7 @@ impl PlotterApp {
                 msg_since_update: 0,
                 msg_rate: 0.0,
             },
+            msg_total_count: 0,
         };
         app.apply_mode();
         app
@@ -161,9 +163,9 @@ impl eframe::App for PlotterApp {
 
         TopBottomPanel::bottom("msg_panel").show(ctx, |ui| {
             ui.add_space(5.0);
-            let prev_msg_len = self.msg_history.len();
-            self.msg_history.extend(self.msg_receiver.try_iter());
-            if self.msg_history.len() > prev_msg_len {
+            for msg in self.msg_receiver.try_iter() {
+                self.msg_total_count += 1;
+                self.msg_history.enqueue((self.msg_total_count, msg));
                 updated = true;
             }
             if !self.msg_history.is_empty() {
@@ -172,8 +174,8 @@ impl eframe::App for PlotterApp {
                     .auto_shrink(false)
                     .max_height(50.0)
                     .show(ui, |ui| {
-                        for msg in self.msg_history.iter() {
-                            ui.label(egui::RichText::new(msg).color(egui::Color32::RED));
+                        for (idx, msg) in self.msg_history.iter() {
+                            ui.label(egui::RichText::new(format!("[{}] {}", idx, msg)).color(egui::Color32::RED));
                         }
                     });
             } else {
