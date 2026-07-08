@@ -51,12 +51,21 @@ pub fn start_input_threads<F>(
             if let Ok(port) = open_serial_port(IN_PORT_PATH) {
                 let mut reader = BufReader::new(port);
                 let mut line = String::new();
-                while reader.read_line(&mut line).is_ok() {
-                    let trimmed = line.trim();
-                    if !trimmed.is_empty() {
-                        let _ = msg_channel.send(trimmed.to_string());
+                loop {
+                    match reader.read_line(&mut line) {
+                        Ok(0) => break, // EOF
+                        Ok(_) => {
+                            let trimmed = line.trim();
+                            if !trimmed.is_empty() {
+                                let _ = msg_channel.send(trimmed.to_string());
+                            }
+                            line.clear();
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                            // Timeout is expected, just keep reading
+                        }
+                        Err(_) => break, // Real error, reconnect
                     }
-                    line.clear();
                 }
             }
             std::thread::sleep(Duration::from_millis(100));
