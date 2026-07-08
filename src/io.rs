@@ -24,6 +24,8 @@ const IN_PORT_PATH: &str = "/dev/cu.usbmodem0xBABECAFE1";
 const OUT_PORT_PATH: &str = "/dev/cu.usbmodem0xBABECAFE3";
 
 const BAUD_RATE: u32 = 115200;
+const TELE_MAX_VALUES: u8 = 8;
+const TELE_FRAME_SIZE: usize = 2 + (TELE_MAX_VALUES as usize * 4);
 
 fn open_serial_port(port_path: &str) -> serialport::Result<Box<dyn SerialPort>> {
     serialport::new(port_path, BAUD_RATE)
@@ -71,7 +73,7 @@ pub fn start_input_threads<F>(
 
                 let mut buf = [0u8; 1024];
                 let mut state = 0; // 0: Idle, 1: NeedLen, 2: Collecting
-                let mut frame = [0u8; 26];
+                let mut frame = [0u8; TELE_FRAME_SIZE];
                 let mut pos = 0;
 
                 loop {
@@ -95,7 +97,7 @@ pub fn start_input_threads<F>(
                                         }
                                     }
                                     1 => {
-                                        if b > 0 && b <= 6 {
+                                        if b > 0 && b <= TELE_MAX_VALUES {
                                             frame[1] = b;
                                             pos = 2;
                                             state = 2;

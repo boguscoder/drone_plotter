@@ -82,10 +82,10 @@ impl PlotterApp {
     fn mode_to_dim(mode: TeleCategory) -> usize {
         match mode {
             TeleCategory::None => 0,
-            TeleCategory::Rc => 6,
+            TeleCategory::Rc => 7,
             TeleCategory::Imu => 6,
             TeleCategory::Attitude => 3,
-            TeleCategory::Pid => 4,
+            TeleCategory::Pid => 6,
             TeleCategory::Mix => 4,
             TeleCategory::Dshot => 4,
         }
@@ -94,10 +94,12 @@ impl PlotterApp {
     fn mode_to_labels(mode: TeleCategory) -> Vec<&'static str> {
         match mode {
             TeleCategory::None => Vec::new(),
-            TeleCategory::Rc => vec!["Roll", "Pitch", "Throttle", "Yaw", "Gain", "Arming"],
+            TeleCategory::Rc => vec![
+                "Roll", "Pitch", "Throttle", "Yaw", "KpGain", "KiGain", "Arming",
+            ],
             TeleCategory::Imu => vec!["gyr(x)", "gyr(y)", "gyr(z)", "acc(x)", "acc(y)", "acc(z)"],
             TeleCategory::Attitude => vec!["roll", "pitch", "yaw"],
-            TeleCategory::Pid => vec!["throttle", "roll", "pitch", "yaw"],
+            TeleCategory::Pid => vec!["roll", "pitch", "yaw", "roll_i", "pitch_i", "yaw_i"],
             TeleCategory::Mix => vec!["M1", "M2", "M3", "M4"],
             TeleCategory::Dshot => vec!["M1", "M2", "M3", "M4"],
         }
@@ -123,6 +125,7 @@ impl eframe::App for PlotterApp {
                 for i in 0..vals {
                     self.data_history[i].enqueue(new_data.values[i]);
                 }
+                println!("Raw data: {:?}", new_data.values);
                 self.stats.msg_since_update += 1;
                 updated = true;
             }
@@ -175,7 +178,10 @@ impl eframe::App for PlotterApp {
                     .max_height(50.0)
                     .show(ui, |ui| {
                         for (idx, msg) in self.msg_history.iter() {
-                            ui.label(egui::RichText::new(format!("[{}] {}", idx, msg)).color(egui::Color32::RED));
+                            ui.label(
+                                egui::RichText::new(format!("[{}] {}", idx, msg))
+                                    .color(egui::Color32::RED),
+                            );
                         }
                     });
             } else {
