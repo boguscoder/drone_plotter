@@ -100,8 +100,18 @@ impl PlotterApp {
             TeleCategory::Imu => vec!["gyr(x)", "gyr(y)", "gyr(z)", "acc(x)", "acc(y)", "acc(z)"],
             TeleCategory::Attitude => vec!["roll", "pitch", "yaw"],
             TeleCategory::Pid => vec!["roll", "pitch", "yaw", "roll_i", "pitch_i", "yaw_i"],
-            TeleCategory::Mix => vec!["M1", "M2", "M3", "M4"],
-            TeleCategory::Dshot => vec!["M1", "M2", "M3", "M4"],
+            TeleCategory::Mix => vec![
+                "M1(Front Right)",
+                "M2(Back Left)",
+                "M3(Front Left)",
+                "M4(Back Right)",
+            ],
+            TeleCategory::Dshot => vec![
+                "M1(Front Right)",
+                "M2(Back Left)",
+                "M3(Front Left)",
+                "M4(Back Right)",
+            ],
         }
     }
 
@@ -237,7 +247,11 @@ impl eframe::App for PlotterApp {
                             });
                     }
 
-                    chart.configure_series_labels().draw().unwrap();
+                    chart
+                        .configure_series_labels()
+                        .position(SeriesLabelPosition::UpperLeft)
+                        .draw()
+                        .unwrap();
                 });
         });
 
