@@ -7,6 +7,7 @@ use egui_plotter::EguiBackend;
 use plotters::prelude::full_palette::*;
 use plotters::prelude::*;
 use ringbuffer::{ConstGenericRingBuffer, RingBuffer};
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use strum::IntoEnumIterator;
 
@@ -45,7 +46,7 @@ struct Stats {
 
 struct PlotterApp {
     data_history: Vec<ConstGenericRingBuffer<f64, MAX_HISTORY_LEN>>,
-    msg_history: ConstGenericRingBuffer<(usize, String), MAX_MSGS>,
+    msg_history: VecDeque<(usize, String, Instant)>,
     data_receiver: Receiver<SensorData>,
     msg_receiver: Receiver<String>,
     tele_mode: TeleCategory,
@@ -62,7 +63,7 @@ impl PlotterApp {
     ) -> Self {
         let mut app = Self {
             data_history: Vec::new(),
-            msg_history: ConstGenericRingBuffer::default(),
+            msg_history: VecDeque::with_capacity(MAX_MSGS),
             data_receiver,
             msg_receiver,
             tele_mode: TeleCategory::None,
@@ -121,6 +122,24 @@ impl PlotterApp {
         self.data_history = vec![ConstGenericRingBuffer::new(); new_dim];
         self.cmd_sender.send(self.tele_mode).unwrap();
     }
+
+    fn cleanup_messages(&mut self, now: Instant) -> bool {
+        let initial_len = self.msg_history.len();
+
+        while self.msg_history.len() > MAX_MSGS {
+            self.msg_history.pop_front();
+        }
+
+        while self
+            .msg_history
+            .front()
+            .is_some_and(|(_, _, time)| now.duration_since(*time) > Duration::from_secs(5))
+        {
+            self.msg_history.pop_front();
+        }
+
+        self.msg_history.len() != initial_len
+    }
 }
 
 impl eframe::App for PlotterApp {
@@ -178,16 +197,21 @@ impl eframe::App for PlotterApp {
             ui.add_space(5.0);
             for msg in self.msg_receiver.try_iter() {
                 self.msg_total_count += 1;
-                self.msg_history.enqueue((self.msg_total_count, msg));
+                self.msg_history.push_back((self.msg_total_count, msg, now));
                 updated = true;
             }
+
+            if self.cleanup_messages(now) {
+                updated = true;
+            }
+
             if !self.msg_history.is_empty() {
                 ScrollArea::vertical()
                     .max_width(f32::INFINITY)
                     .auto_shrink(false)
                     .max_height(50.0)
                     .show(ui, |ui| {
-                        for (idx, msg) in self.msg_history.iter() {
+                        for (idx, msg, _) in self.msg_history.iter() {
                             ui.label(
                                 egui::RichText::new(format!("[{}] {}", idx, msg))
                                     .color(egui::Color32::RED),
@@ -195,7 +219,7 @@ impl eframe::App for PlotterApp {
                         }
                     });
             } else {
-                ui.label("No messages.");
+                ui.label("No new messages.");
             }
             ui.add_space(5.0);
         });

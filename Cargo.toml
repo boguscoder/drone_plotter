@@ -17,3 +17,6 @@ ringbuffer = "0.15.0"
 serialport = "4.7.2"
 strum = "0.27.1"
 strum_macros = "0.27.1"
+
+[profile.release]
+debug = true
