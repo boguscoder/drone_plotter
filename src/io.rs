@@ -24,7 +24,7 @@ const IN_PORT_PATH: &str = "/dev/cu.usbmodem0xBABECAFE1";
 const OUT_PORT_PATH: &str = "/dev/cu.usbmodem0xBABECAFE3";
 
 const BAUD_RATE: u32 = 115200;
-const TELE_MAX_VALUES: u8 = 8;
+const TELE_MAX_VALUES: u8 = 9;
 const TELE_FRAME_SIZE: usize = 2 + (TELE_MAX_VALUES as usize * 4);
 
 fn open_serial_port(port_path: &str) -> serialport::Result<Box<dyn SerialPort>> {
