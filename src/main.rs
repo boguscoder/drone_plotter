@@ -205,6 +205,7 @@ impl eframe::App for PlotterApp {
             ui.add_space(5.0);
             for msg in self.msg_receiver.try_iter() {
                 self.msg_total_count += 1;
+                println!("[{}] Message: {}", self.msg_total_count, msg);
                 self.msg_history.push_back((self.msg_total_count, msg, now));
                 updated = true;
             }
