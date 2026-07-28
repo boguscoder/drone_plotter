@@ -10,6 +10,7 @@ use strum_macros::{AsRefStr, EnumIter};
 pub enum TeleCategory {
     None = 0,
     Imu,
+    Baro,
     Rc,
     Attitude,
     Pid,
