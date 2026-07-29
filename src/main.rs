@@ -1,4 +1,3 @@
-use core::sync::atomic::{AtomicUsize, Ordering};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use eframe::egui;
 use egui::{CentralPanel, ScrollArea, containers::TopBottomPanel};
@@ -12,8 +11,6 @@ use std::time::{Duration, Instant};
 use strum::IntoEnumIterator;
 
 mod io;
-
-static VALS_PER_LINE: AtomicUsize = AtomicUsize::new(0);
 
 const COLORS: [plotters::style::RGBColor; 9] = [
     RGBColor(255, 0, 0),     // Bright Red
@@ -35,6 +32,7 @@ use io::TeleCategory;
 #[derive(Debug, Clone)]
 struct SensorData {
     values: Vec<f64>,
+    pub mode: TeleCategory,
 }
 
 struct Stats {
@@ -80,37 +78,26 @@ impl PlotterApp {
         app
     }
 
-    fn mode_to_dim(mode: TeleCategory) -> usize {
-        match mode {
-            TeleCategory::None => 0,
-            TeleCategory::Imu => 6,
-            TeleCategory::Baro => 2,
-            TeleCategory::Rc => 9,
-            TeleCategory::Attitude => 3,
-            TeleCategory::Pid => 6,
-            TeleCategory::Mix => 4,
-            TeleCategory::Dshot => 4,
-        }
-    }
-
     fn mode_to_labels(mode: TeleCategory) -> Vec<&'static str> {
         match mode {
             TeleCategory::None => Vec::new(),
             TeleCategory::Imu => vec!["gyr(x)", "gyr(y)", "gyr(z)", "acc(x)", "acc(y)", "acc(z)"],
             TeleCategory::Baro => vec!["temp (C)", "altitude (m)"],
             TeleCategory::Rc => vec![
-                "Roll",
-                "Pitch",
-                "Throttle",
-                "Yaw",
-                "Kp Gain",
-                "Ki Gain",
-                "Arming",
-                "Alt Hold",
-                "Alt target",
+                "Roll", "Pitch", "Throttle", "Yaw", "Kp Gain", "Ki Gain", "Arming", "Alt Hold",
+                "Unused",
             ],
             TeleCategory::Attitude => vec!["roll", "pitch", "yaw"],
-            TeleCategory::Pid => vec!["roll", "pitch", "yaw", "roll_i", "pitch_i", "yaw_i"],
+            TeleCategory::Pid => vec![
+                "roll",
+                "pitch",
+                "yaw",
+                "altitude",
+                "roll_i",
+                "pitch_i",
+                "yaw_i",
+                "altitude_i",
+            ],
             TeleCategory::Mix => vec![
                 "M1(Front Right)",
                 "M2(Back Left)",
@@ -123,13 +110,15 @@ impl PlotterApp {
                 "M3(Front Left)",
                 "M4(Back Right)",
             ],
+            TeleCategory::AdHoc => vec![
+                "Value 1", "Value 2", "Value 3", "Value 4", "Value 5", "Value 6", "Value 7",
+                "Value 8", "Value 9",
+            ],
         }
     }
 
     fn apply_mode(&mut self) {
-        let new_dim = Self::mode_to_dim(self.tele_mode);
-        VALS_PER_LINE.store(new_dim, Ordering::Release);
-        self.data_history = vec![ConstGenericRingBuffer::new(); new_dim];
+        self.data_history = vec![ConstGenericRingBuffer::new(); io::TELE_MAX_VALUES as usize];
         self.cmd_sender.send(self.tele_mode).unwrap();
     }
 
@@ -158,7 +147,11 @@ impl eframe::App for PlotterApp {
         let mut updated = false;
 
         while let Ok(new_data) = self.data_receiver.try_recv() {
-            let vals = VALS_PER_LINE.load(Ordering::Acquire);
+            if new_data.mode != self.tele_mode {
+                continue;
+            }
+
+            let vals = new_data.values.len().min(io::TELE_MAX_VALUES as usize);
             if vals > 0 {
                 self.stats.msg_count += 1;
                 for i in 0..vals {
@@ -269,16 +262,23 @@ impl eframe::App for PlotterApp {
 
                     let labels = Self::mode_to_labels(self.tele_mode);
                     for (i, series_data) in self.data_history.iter().enumerate() {
+                        if series_data.is_empty() {
+                            continue;
+                        }
+
                         let series_points = series_data.iter().enumerate().map(|(j, &val)| {
                             ((self.stats.msg_count - series_data.len() + j) as f64, val)
                         });
 
+                        let label_name = labels.get(i).copied().unwrap_or("Unknown");
+                        let color = COLORS[i % COLORS.len()];
+
                         chart
-                            .draw_series(LineSeries::new(series_points, COLORS[i].filled()))
+                            .draw_series(LineSeries::new(series_points, color.filled()))
                             .unwrap()
-                            .label(labels[i])
+                            .label(label_name)
                             .legend(move |(x, y)| {
-                                PathElement::new(vec![(x, y), (x + 20, y)], COLORS[i].filled())
+                                PathElement::new(vec![(x, y), (x + 20, y)], color.filled())
                             });
                     }
 

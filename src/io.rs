@@ -1,4 +1,3 @@
-use core::sync::atomic::Ordering;
 use crossbeam_channel::{Receiver, Sender};
 use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
 use std::io::{BufRead, BufReader, Write};
@@ -16,16 +15,16 @@ pub enum TeleCategory {
     Pid,
     Mix,
     Dshot,
+    AdHoc,
 }
 
 use crate::SensorData;
-use crate::VALS_PER_LINE;
 
 const IN_PORT_PATH: &str = "/dev/tty.usbmodem0xBABECAFE1";
 const OUT_PORT_PATH: &str = "/dev/tty.usbmodem0xBABECAFE3";
 
 const BAUD_RATE: u32 = 115200;
-const TELE_MAX_VALUES: u8 = 9;
+pub const TELE_MAX_VALUES: u8 = 9;
 const TELE_FRAME_SIZE: usize = 2 + (TELE_MAX_VALUES as usize * 4);
 
 fn open_serial_port(port_path: &str) -> serialport::Result<Box<dyn SerialPort>> {
@@ -97,7 +96,6 @@ pub fn start_input_threads<F>(
                     match port.read(&mut buf) {
                         Ok(0) => break, // EOF / disconnected
                         Ok(n) => {
-                            let val_num = VALS_PER_LINE.load(Ordering::Acquire);
                             for &b in &buf[..n] {
                                 match state {
                                     0 => {
@@ -130,9 +128,11 @@ pub fn start_input_threads<F>(
                                                 ])
                                                     as f64);
                                             }
-                                            if values.len() == val_num {
-                                                let _ =
-                                                    data_channel.try_send(SensorData { values });
+                                            if !values.is_empty() {
+                                                let _ = data_channel.try_send(SensorData {
+                                                    values,
+                                                    mode: last_mode,
+                                                });
                                                 repaint_fn();
                                             }
                                             state = 0;
