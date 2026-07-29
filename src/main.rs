@@ -97,7 +97,7 @@ impl PlotterApp {
         match mode {
             TeleCategory::None => Vec::new(),
             TeleCategory::Imu => vec!["gyr(x)", "gyr(y)", "gyr(z)", "acc(x)", "acc(y)", "acc(z)"],
-            TeleCategory::Baro => vec!["pressure (KPa)", "temp (C)"],
+            TeleCategory::Baro => vec!["temp (C)", "altitude (m)"],
             TeleCategory::Rc => vec![
                 "Roll",
                 "Pitch",

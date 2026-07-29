@@ -21,8 +21,8 @@ pub enum TeleCategory {
 use crate::SensorData;
 use crate::VALS_PER_LINE;
 
-const IN_PORT_PATH: &str = "/dev/cu.usbmodem0xBABECAFE1";
-const OUT_PORT_PATH: &str = "/dev/cu.usbmodem0xBABECAFE3";
+const IN_PORT_PATH: &str = "/dev/tty.usbmodem0xBABECAFE1";
+const OUT_PORT_PATH: &str = "/dev/tty.usbmodem0xBABECAFE3";
 
 const BAUD_RATE: u32 = 115200;
 const TELE_MAX_VALUES: u8 = 9;
@@ -95,7 +95,7 @@ pub fn start_input_threads<F>(
                     }
 
                     match port.read(&mut buf) {
-                        Ok(0) | Err(_) => break,
+                        Ok(0) => break, // EOF / disconnected
                         Ok(n) => {
                             let val_num = VALS_PER_LINE.load(Ordering::Acquire);
                             for &b in &buf[..n] {
@@ -142,6 +142,10 @@ pub fn start_input_threads<F>(
                                 }
                             }
                         }
+                        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                            // Expected timeout when no bytes are available yet; keep reading!
+                        }
+                        Err(_) => break, // Real serial error, reconnect
                     }
                 }
             }
