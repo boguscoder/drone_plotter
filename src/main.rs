@@ -82,7 +82,7 @@ impl PlotterApp {
         match mode {
             TeleCategory::None => Vec::new(),
             TeleCategory::Imu => vec!["gyr(x)", "gyr(y)", "gyr(z)", "acc(x)", "acc(y)", "acc(z)"],
-            TeleCategory::Baro => vec!["temp (C)", "altitude (m)"],
+            TeleCategory::Baro => vec!["altitude (m)"],
             TeleCategory::Rc => vec![
                 "Roll", "Pitch", "Throttle", "Yaw", "Kp Gain", "Ki Gain", "Arming", "Alt Hold",
                 "Unused",
@@ -118,6 +118,11 @@ impl PlotterApp {
     }
 
     fn apply_mode(&mut self) {
+        while self.data_receiver.try_recv().is_ok() {}
+
+        for buf in &mut self.data_history {
+            buf.clear();
+        }
         self.data_history = vec![ConstGenericRingBuffer::new(); io::TELE_MAX_VALUES as usize];
         self.cmd_sender.send(self.tele_mode).unwrap();
     }
@@ -261,17 +266,18 @@ impl eframe::App for PlotterApp {
                     chart.configure_mesh().draw().unwrap();
 
                     let labels = Self::mode_to_labels(self.tele_mode);
-                    for (i, series_data) in self.data_history.iter().enumerate() {
+                    for (i, (series_data, &label_name)) in
+                        self.data_history.iter().zip(labels.iter()).enumerate()
+                    {
                         if series_data.is_empty() {
                             continue;
                         }
 
+                        let color = COLORS[i % COLORS.len()];
+
                         let series_points = series_data.iter().enumerate().map(|(j, &val)| {
                             ((self.stats.msg_count - series_data.len() + j) as f64, val)
                         });
-
-                        let label_name = labels.get(i).copied().unwrap_or("Unknown");
-                        let color = COLORS[i % COLORS.len()];
 
                         chart
                             .draw_series(LineSeries::new(series_points, color.filled()))
