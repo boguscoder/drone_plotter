@@ -1,22 +1,8 @@
 use crossbeam_channel::{Receiver, Sender};
+use drone_consts::telemetry::Category as TeleCategory;
 use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
 use std::io::{BufRead, BufReader, Write};
 use std::time::Duration;
-
-use strum_macros::{AsRefStr, EnumIter};
-
-#[derive(Debug, EnumIter, AsRefStr, PartialEq, Clone, Copy)]
-pub enum TeleCategory {
-    None = 0,
-    Imu,
-    Baro,
-    Rc,
-    Attitude,
-    Pid,
-    Mix,
-    Dshot,
-    AdHoc,
-}
 
 use crate::SensorData;
 

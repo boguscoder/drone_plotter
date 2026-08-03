@@ -1,4 +1,5 @@
 use crossbeam_channel::{Receiver, Sender, unbounded};
+use drone_consts::telemetry::Category as TeleCategory;
 use eframe::egui;
 use egui::{CentralPanel, ScrollArea, containers::TopBottomPanel};
 use egui::{Color32, ViewportBuilder};
@@ -26,8 +27,6 @@ const COLORS: [plotters::style::RGBColor; 9] = [
 
 const MAX_HISTORY_LEN: usize = 512;
 const MAX_MSGS: usize = 16;
-
-use io::TeleCategory;
 
 #[derive(Debug, Clone)]
 struct SensorData {

@@ -6,6 +6,8 @@ edition = "2024"
 [dependencies]
 crossbeam-channel = "0.5.15"
 
+drone_consts = { path = "../drone_consts" }
+
 eframe = "0.31.1"
 egui = "0.31.1"
 egui-plotter = "0.4.0"
@@ -16,7 +18,6 @@ ringbuffer = "0.15.0"
 
 serialport = "4.7.2"
 strum = "0.27.1"
-strum_macros = "0.27.1"
 
 [profile.release]
 debug = true
