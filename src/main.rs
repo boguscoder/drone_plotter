@@ -50,6 +50,7 @@ struct PlotterApp {
     cmd_sender: Sender<TeleCategory>,
     stats: Stats,
     msg_total_count: usize,
+    log_raw_data: bool,
 }
 
 impl PlotterApp {
@@ -72,6 +73,7 @@ impl PlotterApp {
                 msg_rate: 0.0,
             },
             msg_total_count: 0,
+            log_raw_data: false,
         };
         app.apply_mode();
         app
@@ -161,7 +163,9 @@ impl eframe::App for PlotterApp {
                 for i in 0..vals {
                     self.data_history[i].enqueue(new_data.values[i]);
                 }
-                println!("Raw data: {:?}", new_data.values);
+                if self.log_raw_data {
+                    println!("Raw data: {:?}", new_data.values);
+                }
                 self.stats.msg_since_update += 1;
                 updated = true;
             }
@@ -183,7 +187,10 @@ impl eframe::App for PlotterApp {
                     "Data Stream Rate: {:.2} msg/sec",
                     self.stats.msg_rate
                 ));
-                ui.add_space(ui.available_width() - 100.0);
+
+                ui.add_space(ui.available_width() - 215.0);
+                ui.add_space(10.0);
+                ui.checkbox(&mut self.log_raw_data, "Log Data");
                 egui::ComboBox::from_label("")
                     .selected_text(self.tele_mode.as_ref())
                     .show_ui(ui, |ui| {
@@ -283,7 +290,11 @@ impl eframe::App for PlotterApp {
                             .unwrap()
                             .label(label_name)
                             .legend(move |(x, y)| {
-                                PathElement::new(vec![(x, y), (x + 20, y)], color.filled())
+                                let line_y = y + 5;
+                                PathElement::new(
+                                    vec![(x, line_y), (x + 20, line_y)],
+                                    color.filled(),
+                                )
                             });
                     }
 
