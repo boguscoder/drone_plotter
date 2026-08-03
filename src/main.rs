@@ -88,7 +88,7 @@ impl PlotterApp {
                 "Roll", "Pitch", "Throttle", "Yaw", "Kp Gain", "Ki Gain", "Arming", "Alt Hold",
                 "Unused",
             ],
-            TeleCategory::Attitude => vec!["roll", "pitch", "yaw"],
+            TeleCategory::Attitude => vec!["roll", "pitch", "yaw", "altitude"],
             TeleCategory::Pid => vec![
                 "roll",
                 "pitch",
@@ -188,7 +188,7 @@ impl eframe::App for PlotterApp {
                     self.stats.msg_rate
                 ));
 
-                ui.add_space(ui.available_width() - 215.0);
+                ui.add_space(ui.available_width() - 190.0);
                 ui.add_space(10.0);
                 ui.checkbox(&mut self.log_raw_data, "Log Data");
                 egui::ComboBox::from_label("")
