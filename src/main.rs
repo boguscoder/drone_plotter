@@ -85,7 +85,7 @@ impl PlotterApp {
             TeleCategory::Imu => vec!["gyr(x)", "gyr(y)", "gyr(z)", "acc(x)", "acc(y)", "acc(z)"],
             TeleCategory::Baro => vec!["altitude (m)"],
             TeleCategory::Rc => vec![
-                "Roll", "Pitch", "Throttle", "Yaw", "Kp Gain", "Ki Gain", "Arming", "Alt Hold",
+                "Roll", "Pitch", "Throttle", "Yaw", "Kp Gain", "Kd Gain", "Arming", "Alt Hold",
                 "Unused",
             ],
             TeleCategory::Attitude => vec!["roll", "pitch", "yaw", "altitude"],
