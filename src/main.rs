@@ -41,8 +41,14 @@ struct Stats {
     msg_rate: f64,
 }
 
+#[derive(Debug, Clone)]
+struct DataSeries {
+    data: ConstGenericRingBuffer<f64, MAX_HISTORY_LEN>,
+    enabled: bool,
+}
+
 struct PlotterApp {
-    data_history: Vec<ConstGenericRingBuffer<f64, MAX_HISTORY_LEN>>,
+    data_history: Vec<DataSeries>,
     msg_history: VecDeque<(usize, String, Instant)>,
     data_receiver: Receiver<SensorData>,
     msg_receiver: Receiver<String>,
@@ -113,7 +119,7 @@ impl PlotterApp {
             ],
             TeleCategory::AdHoc => vec![
                 "Value 1", "Value 2", "Value 3", "Value 4", "Value 5", "Value 6", "Value 7",
-                "Value 8", "Value 9",
+                "Value 8",
             ],
         }
     }
@@ -121,10 +127,16 @@ impl PlotterApp {
     fn apply_mode(&mut self) {
         while self.data_receiver.try_recv().is_ok() {}
 
-        for buf in &mut self.data_history {
-            buf.clear();
+        for series in &mut self.data_history {
+            series.data.clear();
         }
-        self.data_history = vec![ConstGenericRingBuffer::new(); io::TELE_MAX_VALUES as usize];
+        self.data_history = vec![
+            DataSeries {
+                data: ConstGenericRingBuffer::new(),
+                enabled: true,
+            };
+            io::TELE_MAX_VALUES as usize
+        ];
         self.cmd_sender.send(self.tele_mode).unwrap();
     }
 
@@ -161,7 +173,7 @@ impl eframe::App for PlotterApp {
             if vals > 0 {
                 self.stats.msg_count += 1;
                 for i in 0..vals {
-                    self.data_history[i].enqueue(new_data.values[i]);
+                    self.data_history[i].data.enqueue(new_data.values[i]);
                 }
                 if self.log_raw_data {
                     println!("Raw data: {:?}", new_data.values);
@@ -180,6 +192,8 @@ impl eframe::App for PlotterApp {
             self.stats.last_update_time = now;
         }
 
+        let labels = Self::mode_to_labels(self.tele_mode);
+
         TopBottomPanel::top("mode_panel").show(ctx, |ui| {
             ui.add_space(2.0);
             ui.horizontal(|ui| {
@@ -187,6 +201,19 @@ impl eframe::App for PlotterApp {
                     "Data Stream Rate: {:.2} msg/sec",
                     self.stats.msg_rate
                 ));
+
+                ui.add_space(ui.available_width() - 980.0);
+
+                for (i, label) in labels.iter().enumerate() {
+                    ui.add_space(10.0);
+
+                    ui.scope(|ui| {
+                        let color = COLORS[i % COLORS.len()];
+                        ui.style_mut().visuals.widgets.inactive.fg_stroke.color =
+                            Color32::from_rgb(color.0, color.1, color.2);
+                        ui.checkbox(&mut self.data_history[i].enabled, *label);
+                    });
+                }
 
                 ui.add_space(ui.available_width() - 190.0);
                 ui.add_space(10.0);
@@ -251,16 +278,22 @@ impl eframe::App for PlotterApp {
                     let min_x = (self.stats.msg_count as f64 - MAX_HISTORY_LEN as f64).max(0.0);
                     let max_x = self.stats.msg_count as f64;
 
-                    let has_data =
-                        !self.data_history.is_empty() && !self.data_history[0].is_empty();
+                    let has_data = self
+                        .data_history
+                        .iter()
+                        .any(|series| series.enabled && !series.data.is_empty());
                     // Determine Y-axis range for auto-scaling.
                     let mut min_y = if has_data { f64::MAX } else { 0.0 };
                     let mut max_y = if has_data { f64::MIN } else { 0.0 };
-                    for series_data in &self.data_history {
-                        for &val in series_data.iter() {
-                            min_y = min_y.min(val);
-                            max_y = max_y.max(val);
-                        }
+
+                    for val in self
+                        .data_history
+                        .iter()
+                        .filter(|series| series.enabled)
+                        .flat_map(|series| series.data.iter())
+                    {
+                        min_y = min_y.min(*val);
+                        max_y = max_y.max(*val);
                     }
 
                     let mut chart = ChartBuilder::on(&root)
@@ -271,18 +304,21 @@ impl eframe::App for PlotterApp {
 
                     chart.configure_mesh().draw().unwrap();
 
-                    let labels = Self::mode_to_labels(self.tele_mode);
-                    for (i, (series_data, &label_name)) in
+                    for (i, (series, &label_name)) in
                         self.data_history.iter().zip(labels.iter()).enumerate()
                     {
-                        if series_data.is_empty() {
+                        if series.data.is_empty() {
+                            continue;
+                        }
+
+                        if !series.enabled {
                             continue;
                         }
 
                         let color = COLORS[i % COLORS.len()];
 
-                        let series_points = series_data.iter().enumerate().map(|(j, &val)| {
-                            ((self.stats.msg_count - series_data.len() + j) as f64, val)
+                        let series_points = series.data.iter().enumerate().map(|(j, &val)| {
+                            ((self.stats.msg_count - series.data.len() + j) as f64, val)
                         });
 
                         chart
