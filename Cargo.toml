@@ -4,19 +4,17 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-crossbeam-channel = "0.5.15"
+crossbeam-channel = "0.5.16"
 
 drone_consts = { path = "../drone_consts" }
 
-eframe = "0.31.1"
-egui = "0.31.1"
-egui-plotter = "0.4.0"
+eframe = "0.36.1"
+egui = "0.36.1"
+egui_plot = "0.37"
 
-plotters = { version = "0.3.7", features = ["full_palette"] }
+ringbuffer = "0.16.0"
 
-ringbuffer = "0.15.0"
-
-serialport = "4.7.2"
+serialport = "4.9.0"
 strum = "0.27.1"
 
 [profile.release]

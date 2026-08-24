@@ -1,31 +1,31 @@
-use crossbeam_channel::{Receiver, Sender, unbounded};
+use crossbeam_channel::{Receiver, Sender, bounded};
 use drone_consts::telemetry::Category as TeleCategory;
 use eframe::egui;
-use egui::{CentralPanel, ScrollArea, containers::TopBottomPanel};
-use egui::{Color32, ViewportBuilder};
-use egui_plotter::EguiBackend;
-use plotters::prelude::full_palette::*;
-use plotters::prelude::*;
+use egui::{CentralPanel, Color32, Panel, ScrollArea, Ui, ViewportBuilder};
+use egui_plot::{Legend, Line, Plot};
 use ringbuffer::{ConstGenericRingBuffer, RingBuffer};
-use std::collections::VecDeque;
-use std::time::{Duration, Instant};
+use std::{
+    collections::VecDeque,
+    time::{Duration, Instant},
+};
 use strum::IntoEnumIterator;
 
 mod io;
+mod utils;
 
-const COLORS: [plotters::style::RGBColor; 9] = [
-    RGBColor(255, 0, 0),     // Bright Red
-    RGBColor(0, 255, 0),     // Lawn Green
-    RGBColor(100, 170, 255), // Sky Blue
-    RGBColor(255, 255, 0),   // Sunny Yellow
-    RGBColor(255, 160, 0),   // Bright Orange
-    RGBColor(200, 100, 255), // Bright Lavender
-    RGBColor(0, 255, 255),   // Electric Cyan
-    RGBColor(255, 128, 237), // Hot Pink
-    RGBColor(255, 255, 255), // Pure White
+const COLORS: [Color32; 9] = [
+    Color32::from_rgb(255, 0, 0),     // Bright Red
+    Color32::from_rgb(0, 255, 0),     // Lawn Green
+    Color32::from_rgb(100, 170, 255), // Sky Blue
+    Color32::from_rgb(255, 255, 0),   // Sunny Yellow
+    Color32::from_rgb(255, 160, 0),   // Bright Orange
+    Color32::from_rgb(200, 100, 255), // Bright Lavender
+    Color32::from_rgb(0, 255, 255),   // Electric Cyan
+    Color32::from_rgb(255, 128, 237), // Hot Pink
+    Color32::from_rgb(255, 255, 255), // Pure White
 ];
 
-const MAX_HISTORY_LEN: usize = 512;
+const MAX_HISTORY_LEN: usize = 16384; // 2+ mins at 2KHz
 const MAX_MSGS: usize = 16;
 
 #[derive(Debug, Clone)]
@@ -35,16 +35,16 @@ struct SensorData {
 }
 
 struct Stats {
+    frame_count: usize,
     msg_count: usize,
     last_update_time: Instant,
-    msg_since_update: usize,
-    msg_rate: f64,
+    frames_since_update: usize,
+    frame_rate: f64,
 }
 
 #[derive(Debug, Clone)]
 struct DataSeries {
-    data: ConstGenericRingBuffer<f64, MAX_HISTORY_LEN>,
-    enabled: bool,
+    data: ConstGenericRingBuffer<[f64; 2], MAX_HISTORY_LEN>,
 }
 
 struct PlotterApp {
@@ -55,8 +55,8 @@ struct PlotterApp {
     tele_mode: TeleCategory,
     cmd_sender: Sender<TeleCategory>,
     stats: Stats,
-    msg_total_count: usize,
     log_raw_data: bool,
+    paused: bool,
 }
 
 impl PlotterApp {
@@ -73,55 +73,17 @@ impl PlotterApp {
             tele_mode: TeleCategory::None,
             cmd_sender,
             stats: Stats {
+                frame_count: 0,
                 msg_count: 0,
                 last_update_time: Instant::now(),
-                msg_since_update: 0,
-                msg_rate: 0.0,
+                frames_since_update: 0,
+                frame_rate: 0.0,
             },
-            msg_total_count: 0,
             log_raw_data: false,
+            paused: false,
         };
         app.apply_mode();
         app
-    }
-
-    fn mode_to_labels(mode: TeleCategory) -> Vec<&'static str> {
-        match mode {
-            TeleCategory::None => Vec::new(),
-            TeleCategory::Imu => vec!["gyr(x)", "gyr(y)", "gyr(z)", "acc(x)", "acc(y)", "acc(z)"],
-            TeleCategory::Baro => vec!["altitude (m)"],
-            TeleCategory::Rc => vec![
-                "Roll", "Pitch", "Throttle", "Yaw", "Kp Gain", "Kd Gain", "Arming", "Alt Hold",
-                "Unused",
-            ],
-            TeleCategory::Attitude => vec!["roll", "pitch", "yaw", "altitude"],
-            TeleCategory::Pid => vec![
-                "roll",
-                "pitch",
-                "yaw",
-                "altitude",
-                "roll_i",
-                "pitch_i",
-                "yaw_i",
-                "altitude_i",
-            ],
-            TeleCategory::Mix => vec![
-                "M1(Front Right)",
-                "M2(Back Left)",
-                "M3(Front Left)",
-                "M4(Back Right)",
-            ],
-            TeleCategory::Dshot => vec![
-                "M1(Front Right)",
-                "M2(Back Left)",
-                "M3(Front Left)",
-                "M4(Back Right)",
-            ],
-            TeleCategory::AdHoc => vec![
-                "Value 1", "Value 2", "Value 3", "Value 4", "Value 5", "Value 6", "Value 7",
-                "Value 8",
-            ],
-        }
     }
 
     fn apply_mode(&mut self) {
@@ -133,7 +95,6 @@ impl PlotterApp {
         self.data_history = vec![
             DataSeries {
                 data: ConstGenericRingBuffer::new(),
-                enabled: true,
             };
             io::TELE_MAX_VALUES as usize
         ];
@@ -157,67 +118,72 @@ impl PlotterApp {
 
         self.msg_history.len() != initial_len
     }
-}
 
-impl eframe::App for PlotterApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let now = Instant::now();
+    fn drain_data(&mut self) -> bool {
+        let mut batch_vals: Vec<Vec<f64>> = vec![Vec::new(); io::TELE_MAX_VALUES as usize];
         let mut updated = false;
-
         while let Ok(new_data) = self.data_receiver.try_recv() {
             if new_data.mode != self.tele_mode {
                 continue;
             }
 
+            self.stats.frame_count += 1;
+            self.stats.frames_since_update += 1;
+
             let vals = new_data.values.len().min(io::TELE_MAX_VALUES as usize);
             if vals > 0 {
-                self.stats.msg_count += 1;
-                for i in 0..vals {
-                    self.data_history[i].data.enqueue(new_data.values[i]);
+                for (batch_vec, &new_val) in batch_vals.iter_mut().zip(new_data.values.iter()) {
+                    batch_vec.push(new_val);
                 }
                 if self.log_raw_data {
                     println!("Raw data: {:?}", new_data.values);
                 }
-                self.stats.msg_since_update += 1;
-                updated = true;
             }
         }
+        // per frame min/max downsampling
+        if !batch_vals.is_empty() && !self.paused {
+            let current_x = self.stats.frame_count as f64;
 
-        let elapsed_time = now.duration_since(self.stats.last_update_time);
-        const RATE_UPDATE_INTERVAL: Duration = Duration::from_secs(1);
+            for (i, series) in self.data_history.iter_mut().enumerate() {
+                if batch_vals[i].is_empty() {
+                    continue;
+                }
 
-        if elapsed_time >= RATE_UPDATE_INTERVAL {
-            self.stats.msg_rate = self.stats.msg_since_update as f64 / elapsed_time.as_secs_f64();
-            self.stats.msg_since_update = 0;
-            self.stats.last_update_time = now;
+                let mut min_val = f64::MAX;
+                let mut max_val = f64::MIN;
+
+                for &val in &batch_vals[i] {
+                    min_val = min_val.min(val);
+                    max_val = max_val.max(val);
+                }
+
+                series.data.enqueue([current_x, min_val]);
+                series.data.enqueue([current_x, max_val]);
+            }
+            updated = true;
         }
+        updated
+    }
 
-        let labels = Self::mode_to_labels(self.tele_mode);
-
-        TopBottomPanel::top("mode_panel").show(ctx, |ui| {
+    fn ctrl_panel(&mut self, ui: &mut Ui) {
+        Panel::top("control_panel").show(ui, |ui| {
             ui.add_space(2.0);
             ui.horizontal(|ui| {
                 ui.heading(format!(
                     "Data Stream Rate: {:.2} msg/sec",
-                    self.stats.msg_rate
+                    self.stats.frame_rate
                 ));
 
                 ui.add_space(ui.available_width() - 980.0);
-
-                for (i, label) in labels.iter().enumerate() {
-                    ui.add_space(10.0);
-
-                    ui.scope(|ui| {
-                        let color = COLORS[i % COLORS.len()];
-                        ui.style_mut().visuals.widgets.inactive.fg_stroke.color =
-                            Color32::from_rgb(color.0, color.1, color.2);
-                        ui.checkbox(&mut self.data_history[i].enabled, *label);
-                    });
-                }
-
-                ui.add_space(ui.available_width() - 190.0);
+                ui.add_space(ui.available_width() - 218.0);
                 ui.add_space(10.0);
                 ui.checkbox(&mut self.log_raw_data, "Log Data");
+
+                let btn_text = if self.paused { "▶" } else { "⏸" };
+                if ui.button(btn_text).clicked() {
+                    self.paused = !self.paused;
+                }
+
                 egui::ComboBox::from_label("")
                     .selected_text(self.tele_mode.as_ref())
                     .show_ui(ui, |ui| {
@@ -231,15 +197,18 @@ impl eframe::App for PlotterApp {
                         }
                     });
             });
-            ui.add_space(2.0);
+            ui.add_space(1.0);
         });
+    }
 
-        TopBottomPanel::bottom("msg_panel").show(ctx, |ui| {
+    fn msg_panel(&mut self, ui: &mut Ui, now: Instant) -> bool {
+        let mut updated = false;
+        Panel::bottom("msg_panel").show(ui, |ui| {
             ui.add_space(5.0);
             for msg in self.msg_receiver.try_iter() {
-                self.msg_total_count += 1;
-                println!("[{}] Message: {}", self.msg_total_count, msg);
-                self.msg_history.push_back((self.msg_total_count, msg, now));
+                self.stats.msg_count += 1;
+                println!("[{}] Message: {}", self.stats.msg_count, msg);
+                self.msg_history.push_back((self.stats.msg_count, msg, now));
                 updated = true;
             }
 
@@ -265,85 +234,83 @@ impl eframe::App for PlotterApp {
             }
             ui.add_space(5.0);
         });
+        updated
+    }
 
-        CentralPanel::default().show(ctx, |ui| {
-            egui::Frame::canvas(ui.style())
-                .fill(Color32::from_white_alpha(0))
-                .stroke(egui::Stroke::NONE)
-                .show(ui, |ui_plot| {
-                    let root = EguiBackend::new(ui_plot).into_drawing_area();
-                    root.fill(&BLUEGREY_700).unwrap();
+    fn plot(&mut self, ui: &mut Ui) {
+        let labels = utils::mode_to_labels(self.tele_mode);
 
-                    // Define X-axis range (based on sample count).
-                    let min_x = (self.stats.msg_count as f64 - MAX_HISTORY_LEN as f64).max(0.0);
-                    let max_x = self.stats.msg_count as f64;
+        CentralPanel::default()
+            .frame(egui::Frame {
+                fill: Color32::from_rgb(0x45, 0x5a, 0x64),
+                ..Default::default()
+            })
+            .show(ui, |ui| {
+                let msg_cap = self.stats.frame_rate * 5.0;
+                let min_x = (self.stats.frame_count as f64 - msg_cap).max(0.0);
 
-                    let has_data = self
-                        .data_history
-                        .iter()
-                        .any(|series| series.enabled && !series.data.is_empty());
-                    // Determine Y-axis range for auto-scaling.
-                    let mut min_y = if has_data { f64::MAX } else { 0.0 };
-                    let mut max_y = if has_data { f64::MIN } else { 0.0 };
-
-                    for val in self
-                        .data_history
-                        .iter()
-                        .filter(|series| series.enabled)
-                        .flat_map(|series| series.data.iter())
-                    {
-                        min_y = min_y.min(*val);
-                        max_y = max_y.max(*val);
-                    }
-
-                    let mut chart = ChartBuilder::on(&root)
-                        .x_label_area_size(30)
-                        .y_label_area_size(50)
-                        .build_cartesian_2d(min_x..max_x, min_y..max_y)
-                        .unwrap();
-
-                    chart.configure_mesh().draw().unwrap();
-
-                    for (i, (series, &label_name)) in
-                        self.data_history.iter().zip(labels.iter()).enumerate()
-                    {
-                        if series.data.is_empty() {
-                            continue;
+                Plot::new("telemetry_plot")
+                    .legend(Legend::default())
+                    .show_background(false)
+                    .show_crosshair(self.paused)
+                    .set_margin_fraction([0.01, 0.01].into())
+                    .show(ui, |plot_ui| {
+                        if !self.paused {
+                            plot_ui.set_auto_bounds([true, true]);
                         }
 
-                        if !series.enabled {
-                            continue;
+                        for (i, (series, &label_name)) in
+                            self.data_history.iter().zip(labels.iter()).enumerate()
+                        {
+                            if series.data.is_empty() {
+                                continue;
+                            }
+
+                            let color = COLORS[i % COLORS.len()];
+
+                            let points: Vec<[f64; 2]> = if !self.paused {
+                                series
+                                    .data
+                                    .iter()
+                                    .filter(|&&[x, _]| x >= min_x)
+                                    .copied()
+                                    .collect()
+                            } else {
+                                series.data.iter().copied().collect()
+                            };
+
+                            if points.is_empty() {
+                                continue;
+                            }
+
+                            let line = Line::new(label_name, points).color(color);
+                            plot_ui.line(line);
                         }
+                    });
+            });
+    }
+}
 
-                        let color = COLORS[i % COLORS.len()];
+impl eframe::App for PlotterApp {
+    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        let now = Instant::now();
+        let mut has_data = self.drain_data();
+        let elapsed_time = now.duration_since(self.stats.last_update_time);
+        const RATE_UPDATE_INTERVAL: Duration = Duration::from_secs(1);
 
-                        let series_points = series.data.iter().enumerate().map(|(j, &val)| {
-                            ((self.stats.msg_count - series.data.len() + j) as f64, val)
-                        });
+        if elapsed_time >= RATE_UPDATE_INTERVAL {
+            self.stats.frame_rate =
+                self.stats.frames_since_update as f64 / elapsed_time.as_secs_f64();
+            self.stats.frames_since_update = 0;
+            self.stats.last_update_time = now;
+        }
 
-                        chart
-                            .draw_series(LineSeries::new(series_points, color.filled()))
-                            .unwrap()
-                            .label(label_name)
-                            .legend(move |(x, y)| {
-                                let line_y = y + 5;
-                                PathElement::new(
-                                    vec![(x, line_y), (x + 20, line_y)],
-                                    color.filled(),
-                                )
-                            });
-                    }
+        self.ctrl_panel(ui);
+        has_data |= self.msg_panel(ui, now);
+        self.plot(ui);
 
-                    chart
-                        .configure_series_labels()
-                        .position(SeriesLabelPosition::UpperLeft)
-                        .draw()
-                        .unwrap();
-                });
-        });
-
-        if updated {
-            ctx.request_repaint();
+        if has_data {
+            ui.request_repaint();
         }
     }
 }
@@ -355,14 +322,14 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
 
-    let (tx, rx) = unbounded::<SensorData>();
-    let (etx, erx) = unbounded::<String>();
-    let (repaint_tx, repaint_rx) = unbounded::<()>();
-    let (cmd_tx, cmd_rx) = unbounded::<TeleCategory>();
+    let (tx, rx) = bounded::<SensorData>(1024);
+    let (etx, erx) = bounded::<String>(16);
+    let (repaint_tx, repaint_rx) = bounded::<()>(16);
+    let (cmd_tx, cmd_rx) = bounded::<TeleCategory>(16);
 
     io::start_input_threads(
         move || {
-            let _ = repaint_tx.send(());
+            let _ = repaint_tx.try_send(());
         },
         tx,
         etx,
