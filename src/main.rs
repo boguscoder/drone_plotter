@@ -181,6 +181,11 @@ impl PlotterApp {
 
                 let btn_text = if self.paused { "▶" } else { "⏸" };
                 if ui.button(btn_text).clicked() {
+                    if self.paused {
+                        for series in &mut self.data_history {
+                            series.data.clear();
+                        }
+                    }
                     self.paused = !self.paused;
                 }
 
