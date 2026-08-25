@@ -25,7 +25,8 @@ const COLORS: [Color32; 9] = [
     Color32::from_rgb(255, 255, 255), // Pure White
 ];
 
-const MAX_HISTORY_LEN: usize = 16384; // 2+ mins at 2KHz
+// 2+ mins at 2KHz (we sample into 2 points per UI frame @ 60 FPS)
+const MAX_HISTORY_LEN: usize = 16384;
 const MAX_MSGS: usize = 16;
 
 #[derive(Debug, Clone)]
@@ -180,14 +181,17 @@ impl PlotterApp {
                 ui.checkbox(&mut self.log_raw_data, "Log Data");
 
                 let btn_text = if self.paused { "▶" } else { "⏸" };
-                if ui.button(btn_text).clicked() {
-                    if self.paused {
-                        for series in &mut self.data_history {
-                            series.data.clear();
+
+                ui.add_enabled_ui(self.tele_mode != TeleCategory::Dump, |ui| {
+                    if ui.button(btn_text).clicked() {
+                        if self.paused {
+                            for series in &mut self.data_history {
+                                series.data.clear();
+                            }
                         }
+                        self.paused = !self.paused;
                     }
-                    self.paused = !self.paused;
-                }
+                });
 
                 egui::ComboBox::from_label("")
                     .selected_text(self.tele_mode.as_ref())
@@ -273,16 +277,17 @@ impl PlotterApp {
 
                             let color = COLORS[i % COLORS.len()];
 
-                            let points: Vec<[f64; 2]> = if !self.paused {
-                                series
-                                    .data
-                                    .iter()
-                                    .filter(|&&[x, _]| x >= min_x)
-                                    .copied()
-                                    .collect()
-                            } else {
-                                series.data.iter().copied().collect()
-                            };
+                            let points: Vec<[f64; 2]> =
+                                if !self.paused && self.tele_mode != TeleCategory::Dump {
+                                    series
+                                        .data
+                                        .iter()
+                                        .filter(|&&[x, _]| x >= min_x)
+                                        .copied()
+                                        .collect()
+                                } else {
+                                    series.data.iter().copied().collect()
+                                };
 
                             if points.is_empty() {
                                 continue;
