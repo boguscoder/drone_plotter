@@ -3,7 +3,7 @@ use drone_consts::telemetry::Category as TeleCategory;
 use eframe::egui;
 use egui::{CentralPanel, Color32, Panel, ScrollArea, Ui, ViewportBuilder};
 use egui_plot::{Legend, Line, Plot};
-use ringbuffer::{ConstGenericRingBuffer, RingBuffer};
+use ringbuffer::{AllocRingBuffer, RingBuffer};
 use std::{
     collections::VecDeque,
     time::{Duration, Instant},
@@ -25,8 +25,7 @@ const COLORS: [Color32; 9] = [
     Color32::from_rgb(255, 255, 255), // Pure White
 ];
 
-// 2+ mins at 2KHz (we sample into 2 points per UI frame @ 60 FPS)
-const MAX_HISTORY_LEN: usize = 16384;
+const MAX_HISTORY_LEN: usize = 0x40000;
 const MAX_MSGS: usize = 16;
 
 #[derive(Debug, Clone)]
@@ -45,7 +44,7 @@ struct Stats {
 
 #[derive(Debug, Clone)]
 struct DataSeries {
-    data: ConstGenericRingBuffer<[f64; 2], MAX_HISTORY_LEN>,
+    data: AllocRingBuffer<[f64; 2]>,
 }
 
 struct PlotterApp {
@@ -58,6 +57,7 @@ struct PlotterApp {
     stats: Stats,
     log_raw_data: bool,
     paused: bool,
+    paused_at_x: f64,
 }
 
 impl PlotterApp {
@@ -82,6 +82,7 @@ impl PlotterApp {
             },
             log_raw_data: false,
             paused: false,
+            paused_at_x: f64::MAX,
         };
         app.apply_mode();
         app
@@ -95,7 +96,7 @@ impl PlotterApp {
         }
         self.data_history = vec![
             DataSeries {
-                data: ConstGenericRingBuffer::new(),
+                data: AllocRingBuffer::new(MAX_HISTORY_LEN),
             };
             io::TELE_MAX_VALUES as usize
         ];
@@ -121,7 +122,6 @@ impl PlotterApp {
     }
 
     fn drain_data(&mut self) -> bool {
-        let mut batch_vals: Vec<Vec<f64>> = vec![Vec::new(); io::TELE_MAX_VALUES as usize];
         let mut updated = false;
         while let Ok(new_data) = self.data_receiver.try_recv() {
             if new_data.mode != self.tele_mode {
@@ -133,36 +133,18 @@ impl PlotterApp {
 
             let vals = new_data.values.len().min(io::TELE_MAX_VALUES as usize);
             if vals > 0 {
-                for (batch_vec, &new_val) in batch_vals.iter_mut().zip(new_data.values.iter()) {
-                    batch_vec.push(new_val);
+                for (i, &new_val) in new_data.values.iter().take(vals).enumerate() {
+                    self.data_history[i]
+                        .data
+                        .enqueue([self.stats.frame_count as f64, new_val]);
                 }
                 if self.log_raw_data {
                     println!("Raw data: {:?}", new_data.values);
                 }
+                updated = true;
             }
         }
-        // per frame min/max downsampling
-        if !batch_vals.is_empty() && !self.paused {
-            let current_x = self.stats.frame_count as f64;
 
-            for (i, series) in self.data_history.iter_mut().enumerate() {
-                if batch_vals[i].is_empty() {
-                    continue;
-                }
-
-                let mut min_val = f64::MAX;
-                let mut max_val = f64::MIN;
-
-                for &val in &batch_vals[i] {
-                    min_val = min_val.min(val);
-                    max_val = max_val.max(val);
-                }
-
-                series.data.enqueue([current_x, min_val]);
-                series.data.enqueue([current_x, max_val]);
-            }
-            updated = true;
-        }
         updated
     }
 
@@ -184,12 +166,12 @@ impl PlotterApp {
 
                 ui.add_enabled_ui(self.tele_mode != TeleCategory::Dump, |ui| {
                     if ui.button(btn_text).clicked() {
-                        if self.paused {
-                            for series in &mut self.data_history {
-                                series.data.clear();
-                            }
-                        }
                         self.paused = !self.paused;
+                        if self.paused {
+                            self.paused_at_x = self.stats.frame_count as f64;
+                        } else {
+                            self.paused_at_x = f64::MAX;
+                        }
                     }
                 });
 
@@ -202,6 +184,9 @@ impl PlotterApp {
                                 .clicked()
                             {
                                 self.apply_mode();
+                                if self.tele_mode == TeleCategory::Dump {
+                                    self.paused = true;
+                                }
                             }
                         }
                     });
@@ -275,8 +260,6 @@ impl PlotterApp {
                                 continue;
                             }
 
-                            let color = COLORS[i % COLORS.len()];
-
                             let points: Vec<[f64; 2]> =
                                 if !self.paused && self.tele_mode != TeleCategory::Dump {
                                     series
@@ -286,14 +269,20 @@ impl PlotterApp {
                                         .copied()
                                         .collect()
                                 } else {
-                                    series.data.iter().copied().collect()
+                                    series
+                                        .data
+                                        .iter()
+                                        .filter(|&&[x, _]| !self.paused || x <= self.paused_at_x)
+                                        .copied()
+                                        .collect()
                                 };
 
                             if points.is_empty() {
                                 continue;
                             }
 
-                            let line = Line::new(label_name, points).color(color);
+                            let line =
+                                Line::new(label_name, points).color(COLORS[i % COLORS.len()]);
                             plot_ui.line(line);
                         }
                     });
