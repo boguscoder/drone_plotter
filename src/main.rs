@@ -184,11 +184,7 @@ impl PlotterApp {
                                 .clicked()
                             {
                                 self.apply_mode();
-                                self.paused = if self.tele_mode == TeleCategory::Dump {
-                                    true
-                                } else {
-                                    false
-                                }
+                                self.paused = self.tele_mode == TeleCategory::Dump;
                             }
                         }
                     });

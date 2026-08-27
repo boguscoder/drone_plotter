@@ -27,13 +27,7 @@ pub fn mode_to_labels(mode: TeleCategory) -> Vec<&'static str> {
             "yaw_i",
             "altitude_i",
         ],
-        TeleCategory::Mix => vec![
-            "M1(Front Right)",
-            "M2(Back Left)",
-            "M3(Front Left)",
-            "M4(Back Right)",
-        ],
-        TeleCategory::Dshot => vec![
+        TeleCategory::Mix | TeleCategory::Dshot => vec![
             "M1(Front Right)",
             "M2(Back Left)",
             "M3(Front Left)",
