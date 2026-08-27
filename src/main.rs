@@ -71,7 +71,7 @@ impl PlotterApp {
             msg_history: VecDeque::with_capacity(MAX_MSGS),
             data_receiver,
             msg_receiver,
-            tele_mode: TeleCategory::None,
+            tele_mode: TeleCategory::Imu,
             cmd_sender,
             stats: Stats {
                 frame_count: 0,
