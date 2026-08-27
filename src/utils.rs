@@ -6,8 +6,15 @@ pub fn mode_to_labels(mode: TeleCategory) -> Vec<&'static str> {
         TeleCategory::Imu => vec!["gyr(x)", "gyr(y)", "gyr(z)", "acc(x)", "acc(y)", "acc(z)"],
         TeleCategory::Baro => vec!["altitude (m)"],
         TeleCategory::Rc => vec![
-            "Roll", "Pitch", "Throttle", "Yaw", "Kp Gain", "Kd Gain", "Arming", "Alt Hold",
-            "Unused",
+            "Roll",
+            "Pitch",
+            "Throttle",
+            "Yaw",
+            "Kp Gain",
+            "Kd Gain",
+            "Arming",
+            "Alt Hold",
+            "Bbox Flush",
         ],
         TeleCategory::Attitude => vec!["roll", "pitch", "yaw", "altitude"],
         TeleCategory::Pid => vec![
