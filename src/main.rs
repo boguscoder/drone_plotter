@@ -2,7 +2,7 @@ use crossbeam_channel::{Receiver, Sender, bounded};
 use drone_consts::telemetry::Category as TeleCategory;
 use eframe::egui;
 use egui::{CentralPanel, Color32, Panel, ScrollArea, Ui, ViewportBuilder};
-use egui_plot::{Legend, Line, Plot};
+use egui_plot::{HoverPosition, Legend, Line, Plot};
 use ringbuffer::{AllocRingBuffer, RingBuffer};
 use std::{
     collections::VecDeque,
@@ -157,9 +157,7 @@ impl PlotterApp {
                     self.stats.frame_rate
                 ));
 
-                ui.add_space(ui.available_width() - 980.0);
-                ui.add_space(ui.available_width() - 218.0);
-                ui.add_space(10.0);
+                ui.add_space(ui.available_width() - 205.0);
                 ui.checkbox(&mut self.log_raw_data, "Log Data");
 
                 let btn_text = if self.paused { "▶" } else { "⏸" };
@@ -246,6 +244,16 @@ impl PlotterApp {
                     .show_background(false)
                     .show_crosshair(self.paused)
                     .set_margin_fraction([0.01, 0.01].into())
+                    .label_formatter(|pos| match pos {
+                        HoverPosition::NearDataPoint {
+                            plot_name,
+                            position,
+                            ..
+                        } if !plot_name.is_empty() => {
+                            Some(format!("{}: {:}", plot_name, position.y))
+                        }
+                        _ => None,
+                    })
                     .show(ui, |plot_ui| {
                         if !self.paused {
                             plot_ui.set_auto_bounds([true, true]);
@@ -334,7 +342,7 @@ fn main() -> eframe::Result {
     );
 
     eframe::run_native(
-        "Drone Stream Plotter",
+        "Drone Telemetry Plotter",
         options,
         Box::new(move |cc| {
             let ctx = cc.egui_ctx.clone();

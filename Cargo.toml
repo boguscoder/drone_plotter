@@ -3,6 +3,9 @@ name = "stream_plotter"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+telemetry = []
+
 [dependencies]
 crossbeam-channel = "0.5.16"
 
