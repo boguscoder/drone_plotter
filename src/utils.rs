@@ -1,11 +1,13 @@
-use drone_consts::telemetry::Category as TeleCategory;
+use drone_consts::telemetry::Mode;
 
-pub fn mode_to_labels(mode: TeleCategory) -> Vec<&'static str> {
+pub fn mode_to_labels(mode: Mode) -> Vec<&'static str> {
     match mode {
-        TeleCategory::None => Vec::new(),
-        TeleCategory::Imu => vec!["gyr(x)", "gyr(y)", "gyr(z)", "acc(x)", "acc(y)", "acc(z)"],
-        TeleCategory::Baro => vec!["altitude (m)"],
-        TeleCategory::Rc => vec![
+        Mode::None => Vec::new(),
+        Mode::Imu => {
+            vec!["gyr(x)", "gyr(y)", "gyr(z)", "acc(x)", "acc(y)", "acc(z)"]
+        }
+        Mode::Baro => vec!["altitude (m)"],
+        Mode::Rc => vec![
             "Roll",
             "Pitch",
             "Throttle",
@@ -16,8 +18,8 @@ pub fn mode_to_labels(mode: TeleCategory) -> Vec<&'static str> {
             "Alt Hold",
             "Bbox Flush",
         ],
-        TeleCategory::Attitude => vec!["roll", "pitch", "yaw", "altitude"],
-        TeleCategory::Pid => vec![
+        Mode::Attitude => vec!["roll", "pitch", "yaw", "altitude"],
+        Mode::Pid => vec![
             "roll",
             "pitch",
             "yaw",
@@ -27,14 +29,11 @@ pub fn mode_to_labels(mode: TeleCategory) -> Vec<&'static str> {
             "yaw_i",
             "altitude_i",
         ],
-        TeleCategory::Mix | TeleCategory::Dshot => vec![
+        Mode::Mix | Mode::Dshot => vec![
             "M1(Front Right)",
             "M2(Back Left)",
             "M3(Front Left)",
             "M4(Back Right)",
-        ],
-        TeleCategory::Dump => vec![
-            "Value 1", "Value 2", "Value 3", "Value 4", "Value 5", "Value 6", "Value 7", "Value 8",
         ],
     }
 }

@@ -1,5 +1,5 @@
 use crossbeam_channel::{Receiver, Sender};
-use drone_consts::telemetry::Category as TeleCategory;
+use drone_consts::telemetry::{Command, Mode};
 use serialport::{DataBits, FlowControl, Parity, SerialPort, StopBits};
 use std::io::{BufRead, BufReader, Write};
 use std::time::Duration;
@@ -27,7 +27,7 @@ pub fn start_input_threads<F>(
     repaint_fn: F,
     data_channel: Sender<SensorData>,
     msg_channel: Sender<String>,
-    cmd_channel: Receiver<TeleCategory>,
+    cmd_channel: Receiver<Command>,
 ) where
     F: Fn() + Send + Sync + 'static,
 {
@@ -60,11 +60,13 @@ pub fn start_input_threads<F>(
 
     // Handle binary telemetry from the app port in the main input thread
     std::thread::spawn(move || {
-        let mut last_mode = TeleCategory::None;
+        let mut last_mode = Mode::None;
+        let mut last_cmd = Command::SetTelemetryMode(Mode::None);
         loop {
             if let Ok(mut port) = open_serial_port(OUT_PORT_PATH) {
                 // Send last known mode immediately on reconnect
-                port.write_all(&[last_mode as u8]).unwrap();
+                println!("Replay command {:?}", last_cmd);
+                port.write_all(&[last_cmd.into()]).unwrap();
 
                 let mut buf = [0u8; 1024];
                 let mut state = 0; // 0: Idle, 1: NeedLen, 2: Collecting
@@ -72,9 +74,15 @@ pub fn start_input_threads<F>(
                 let mut pos = 0;
 
                 loop {
-                    while let Ok(mode) = cmd_channel.try_recv() {
-                        last_mode = mode;
-                        if port.write_all(&[last_mode as u8]).is_err() {
+                    while let Ok(cmd) = cmd_channel.try_recv() {
+                        last_cmd = cmd;
+
+                        if let Command::SetTelemetryMode(mode) = cmd {
+                            last_mode = mode;
+                        }
+
+                        println!("Command {:?}", cmd);
+                        if port.write_all(&[cmd.into()]).is_err() {
                             break;
                         }
                     }

@@ -1,5 +1,5 @@
 use crossbeam_channel::{Receiver, Sender, bounded};
-use drone_consts::telemetry::Category as TeleCategory;
+use drone_consts::telemetry::{Command, Mode};
 use eframe::egui;
 use egui::{CentralPanel, Color32, Panel, ScrollArea, Ui, ViewportBuilder};
 use egui_plot::{HoverPosition, Legend, Line, Plot};
@@ -31,7 +31,7 @@ const MAX_MSGS: usize = 16;
 #[derive(Debug, Clone)]
 struct SensorData {
     values: Vec<f64>,
-    pub mode: TeleCategory,
+    pub mode: Mode,
 }
 
 struct Stats {
@@ -47,31 +47,37 @@ struct DataSeries {
     data: AllocRingBuffer<[f64; 2]>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum DisplayState {
+    Live,
+    Paused { at_x: f64 },
+    DumpView,
+}
+
 struct PlotterApp {
     data_history: Vec<DataSeries>,
     msg_history: VecDeque<(usize, String, Instant)>,
     data_receiver: Receiver<SensorData>,
     msg_receiver: Receiver<String>,
-    tele_mode: TeleCategory,
-    cmd_sender: Sender<TeleCategory>,
+    tele_mode: Mode,
+    cmd_sender: Sender<Command>,
     stats: Stats,
     log_raw_data: bool,
-    paused: bool,
-    paused_at_x: f64,
+    state: DisplayState,
 }
 
 impl PlotterApp {
     fn new(
         data_receiver: Receiver<SensorData>,
         msg_receiver: Receiver<String>,
-        cmd_sender: Sender<TeleCategory>,
+        cmd_sender: Sender<Command>,
     ) -> Self {
         let mut app = Self {
             data_history: Vec::new(),
             msg_history: VecDeque::with_capacity(MAX_MSGS),
             data_receiver,
             msg_receiver,
-            tele_mode: TeleCategory::Imu,
+            tele_mode: Mode::Imu,
             cmd_sender,
             stats: Stats {
                 frame_count: 0,
@@ -81,26 +87,19 @@ impl PlotterApp {
                 frame_rate: 0.0,
             },
             log_raw_data: false,
-            paused: false,
-            paused_at_x: f64::MAX,
+            state: DisplayState::Live,
         };
         app.apply_mode();
         app
     }
 
-    fn apply_mode(&mut self) {
-        while self.data_receiver.try_recv().is_ok() {}
-
-        for series in &mut self.data_history {
-            series.data.clear();
-        }
+    fn cleanup_history(&mut self) {
         self.data_history = vec![
             DataSeries {
                 data: AllocRingBuffer::new(MAX_HISTORY_LEN),
             };
             io::TELE_MAX_VALUES as usize
         ];
-        self.cmd_sender.send(self.tele_mode).unwrap();
     }
 
     fn cleanup_messages(&mut self, now: Instant) -> bool {
@@ -121,8 +120,18 @@ impl PlotterApp {
         self.msg_history.len() != initial_len
     }
 
+    fn apply_mode(&mut self) {
+        while self.data_receiver.try_recv().is_ok() {}
+        self.cleanup_history();
+        self.cmd_sender
+            .send(Command::SetTelemetryMode(self.tele_mode))
+            .unwrap();
+        self.state = DisplayState::Live;
+    }
+
     fn drain_data(&mut self) -> bool {
         let mut updated = false;
+
         while let Ok(new_data) = self.data_receiver.try_recv() {
             if new_data.mode != self.tele_mode {
                 continue;
@@ -157,32 +166,37 @@ impl PlotterApp {
                     self.stats.frame_rate
                 ));
 
-                ui.add_space(ui.available_width() - 205.0);
+                ui.add_space(ui.available_width() - 235.0);
                 ui.checkbox(&mut self.log_raw_data, "Log Data");
 
-                let btn_text = if self.paused { "▶" } else { "⏸" };
+                let is_paused = matches!(self.state, DisplayState::Paused { .. });
+                let btn_text = if is_paused { "▶" } else { "⏸" };
 
-                ui.add_enabled_ui(self.tele_mode != TeleCategory::Dump, |ui| {
-                    if ui.button(btn_text).clicked() {
-                        self.paused = !self.paused;
-                        if self.paused {
-                            self.paused_at_x = self.stats.frame_count as f64;
-                        } else {
-                            self.paused_at_x = f64::MAX;
-                        }
+                if ui.button(btn_text).clicked() {
+                    if is_paused {
+                        self.state = DisplayState::Live;
+                    } else {
+                        self.state = DisplayState::Paused {
+                            at_x: self.stats.frame_count as f64,
+                        };
                     }
-                });
+                }
+
+                if ui.button("💾").clicked() {
+                    self.cleanup_history();
+                    self.state = DisplayState::DumpView;
+                    self.cmd_sender.send(Command::DumpFlash).unwrap();
+                }
 
                 egui::ComboBox::from_label("")
                     .selected_text(self.tele_mode.as_ref())
                     .show_ui(ui, |ui| {
-                        for option in TeleCategory::iter() {
+                        for option in Mode::iter() {
                             if ui
                                 .selectable_value(&mut self.tele_mode, option, option.as_ref())
                                 .clicked()
                             {
                                 self.apply_mode();
-                                self.paused = self.tele_mode == TeleCategory::Dump;
                             }
                         }
                     });
@@ -229,6 +243,7 @@ impl PlotterApp {
 
     fn plot(&mut self, ui: &mut Ui) {
         let labels = utils::mode_to_labels(self.tele_mode);
+        let is_live = self.state == DisplayState::Live;
 
         CentralPanel::default()
             .frame(egui::Frame {
@@ -236,13 +251,10 @@ impl PlotterApp {
                 ..Default::default()
             })
             .show(ui, |ui| {
-                let msg_cap = self.stats.frame_rate * 5.0;
-                let min_x = (self.stats.frame_count as f64 - msg_cap).max(0.0);
-
                 Plot::new("telemetry_plot")
                     .legend(Legend::default())
                     .show_background(false)
-                    .show_crosshair(self.paused)
+                    .show_crosshair(!is_live)
                     .set_margin_fraction([0.01, 0.01].into())
                     .label_formatter(|pos| match pos {
                         HoverPosition::NearDataPoint {
@@ -255,7 +267,7 @@ impl PlotterApp {
                         _ => None,
                     })
                     .show(ui, |plot_ui| {
-                        if !self.paused {
+                        if !matches!(self.state, DisplayState::Paused { .. }) {
                             plot_ui.set_auto_bounds([true, true]);
                         }
 
@@ -266,22 +278,25 @@ impl PlotterApp {
                                 continue;
                             }
 
-                            let points: Vec<[f64; 2]> =
-                                if !self.paused && self.tele_mode != TeleCategory::Dump {
+                            let points: Vec<[f64; 2]> = match self.state {
+                                DisplayState::Live => {
+                                    let msg_cap = self.stats.frame_rate * 5.0;
+                                    let min_x = (self.stats.frame_count as f64 - msg_cap).max(0.0);
                                     series
                                         .data
                                         .iter()
-                                        .filter(|&&[x, _]| x >= min_x)
+                                        .filter(|&&[x, _]| x > min_x)
                                         .copied()
                                         .collect()
-                                } else {
-                                    series
-                                        .data
-                                        .iter()
-                                        .filter(|&&[x, _]| !self.paused || x <= self.paused_at_x)
-                                        .copied()
-                                        .collect()
-                                };
+                                }
+                                DisplayState::Paused { at_x } => series
+                                    .data
+                                    .iter()
+                                    .filter(|&&[x, _]| x <= at_x)
+                                    .copied()
+                                    .collect(),
+                                DisplayState::DumpView => series.data.iter().copied().collect(),
+                            };
 
                             if points.is_empty() {
                                 continue;
@@ -330,7 +345,7 @@ fn main() -> eframe::Result {
     let (tx, rx) = bounded::<SensorData>(1024);
     let (etx, erx) = bounded::<String>(16);
     let (repaint_tx, repaint_rx) = bounded::<()>(16);
-    let (cmd_tx, cmd_rx) = bounded::<TeleCategory>(16);
+    let (cmd_tx, cmd_rx) = bounded::<Command>(16);
 
     io::start_input_threads(
         move || {
