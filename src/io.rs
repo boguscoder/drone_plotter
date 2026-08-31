@@ -31,6 +31,7 @@ pub fn start_input_threads<F>(
 ) where
     F: Fn() + Send + Sync + 'static,
 {
+    let msg_clone = msg_channel.clone();
     // Spawn a thread for text logs from the log port
     std::thread::spawn(move || {
         loop {
@@ -43,7 +44,7 @@ pub fn start_input_threads<F>(
                         Ok(_) => {
                             let trimmed = line.trim();
                             if !trimmed.is_empty() {
-                                let _ = msg_channel.send(trimmed.to_string());
+                                let _ = msg_channel.send(format!("⇠ {}", trimmed));
                             }
                             line.clear();
                         }
@@ -65,7 +66,9 @@ pub fn start_input_threads<F>(
         loop {
             if let Ok(mut port) = open_serial_port(OUT_PORT_PATH) {
                 // Send last known mode immediately on reconnect
-                println!("Replay command {:?}", last_cmd);
+                msg_clone
+                    .send(format!("⇢ Replay command {:?}", last_cmd))
+                    .unwrap();
                 port.write_all(&[last_cmd.into()]).unwrap();
 
                 let mut buf = [0u8; 1024];
@@ -81,7 +84,7 @@ pub fn start_input_threads<F>(
                             last_mode = mode;
                         }
 
-                        println!("Command {:?}", cmd);
+                        msg_clone.send(format!("⇢ Command {:?}", cmd)).unwrap();
                         if port.write_all(&[cmd.into()]).is_err() {
                             break;
                         }

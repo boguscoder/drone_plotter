@@ -1,7 +1,7 @@
 use crossbeam_channel::{Receiver, Sender, bounded};
 use drone_consts::telemetry::{Command, Mode};
 use eframe::egui;
-use egui::{CentralPanel, Color32, Panel, ScrollArea, Ui, ViewportBuilder};
+use egui::{CentralPanel, Color32, FontId, Panel, ScrollArea, Ui, ViewportBuilder};
 use egui_plot::{HoverPosition, Legend, Line, Plot};
 use ringbuffer::{AllocRingBuffer, RingBuffer};
 use std::{
@@ -36,7 +36,6 @@ struct SensorData {
 
 struct Stats {
     frame_count: usize,
-    msg_count: usize,
     last_update_time: Instant,
     frames_since_update: usize,
     frame_rate: f64,
@@ -56,7 +55,7 @@ enum DisplayState {
 
 struct PlotterApp {
     data_history: Vec<DataSeries>,
-    msg_history: VecDeque<(usize, String, Instant)>,
+    msg_history: VecDeque<(String, Instant)>,
     data_receiver: Receiver<SensorData>,
     msg_receiver: Receiver<String>,
     tele_mode: Mode,
@@ -81,7 +80,6 @@ impl PlotterApp {
             cmd_sender,
             stats: Stats {
                 frame_count: 0,
-                msg_count: 0,
                 last_update_time: Instant::now(),
                 frames_since_update: 0,
                 frame_rate: 0.0,
@@ -112,7 +110,7 @@ impl PlotterApp {
         while self
             .msg_history
             .front()
-            .is_some_and(|(_, _, time)| now.duration_since(*time) > Duration::from_secs(5))
+            .is_some_and(|(_, time)| now.duration_since(*time) > Duration::from_secs(5))
         {
             self.msg_history.pop_front();
         }
@@ -210,9 +208,8 @@ impl PlotterApp {
         Panel::bottom("msg_panel").show(ui, |ui| {
             ui.add_space(5.0);
             for msg in self.msg_receiver.try_iter() {
-                self.stats.msg_count += 1;
-                println!("[{}] Message: {}", self.stats.msg_count, msg);
-                self.msg_history.push_back((self.stats.msg_count, msg, now));
+                println!("{}", msg);
+                self.msg_history.push_back((msg, now));
                 updated = true;
             }
 
@@ -226,10 +223,11 @@ impl PlotterApp {
                     .auto_shrink(false)
                     .max_height(50.0)
                     .show(ui, |ui| {
-                        for (idx, msg, _) in self.msg_history.iter() {
+                        for (msg, _) in self.msg_history.iter() {
                             ui.label(
-                                egui::RichText::new(format!("[{}] {}", idx, msg))
-                                    .color(egui::Color32::RED),
+                                egui::RichText::new(msg)
+                                    .color(egui::Color32::RED)
+                                    .font(FontId::monospace(12.0)),
                             );
                         }
                     });
