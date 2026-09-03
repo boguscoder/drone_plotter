@@ -27,6 +27,7 @@ const COLORS: [Color32; 9] = [
 
 const MAX_HISTORY_LEN: usize = 0x40000;
 const MAX_MSGS: usize = 16;
+const MAX_PLOT_POINTS: usize = 2048;
 
 #[derive(Debug, Clone)]
 struct SensorData {
@@ -51,6 +52,59 @@ enum DisplayState {
     Live,
     Paused { at_x: f64 },
     DumpView,
+}
+
+fn get_points(series: &DataSeries, state: DisplayState, data_rate: f64) -> Vec<[f64; 2]> {
+    let len = series.data.len();
+    if len == 0 {
+        return Vec::new();
+    }
+    let (skip, take) = match state {
+        DisplayState::Live => {
+            let take = ((data_rate * 5.0).max(512.0).ceil() as usize).min(len);
+            (len - take, take)
+        }
+        DisplayState::Paused { at_x } => match series.data.front() {
+            Some(&[oldest, _]) => (0, ((at_x - oldest + 1.0).max(0.0) as usize).min(len)),
+            None => (0, 0),
+        },
+        DisplayState::DumpView => (0, len),
+    };
+    if take == 0 {
+        return Vec::new();
+    }
+    let stride = take.div_ceil(MAX_PLOT_POINTS);
+    let mut it = series.data.iter().skip(skip).take(take);
+    if stride <= 1 {
+        return it.copied().collect();
+    }
+    let mut out = Vec::with_capacity(2 * MAX_PLOT_POINTS + 1);
+    while let Some(&first) = it.next() {
+        let (mut mn, mut mx) = (first, first);
+        for &p in it.by_ref().take(stride - 1) {
+            if p[1] < mn[1] {
+                mn = p;
+            }
+            if p[1] > mx[1] {
+                mx = p;
+            }
+        }
+        if mn[0] <= mx[0] {
+            out.push(mn);
+            if mx != mn {
+                out.push(mx);
+            }
+        } else {
+            out.push(mx);
+            out.push(mn);
+        }
+    }
+    if let Some(&last) = series.data.get(skip + take - 1)
+        && out.last() != Some(&last)
+    {
+        out.push(last);
+    }
+    out
 }
 
 struct PlotterApp {
@@ -276,25 +330,8 @@ impl PlotterApp {
                                 continue;
                             }
 
-                            let points: Vec<[f64; 2]> = match self.state {
-                                DisplayState::Live => {
-                                    let msg_cap = self.stats.frame_rate * 5.0;
-                                    let min_x = (self.stats.frame_count as f64 - msg_cap).max(0.0);
-                                    series
-                                        .data
-                                        .iter()
-                                        .filter(|&&[x, _]| x > min_x)
-                                        .copied()
-                                        .collect()
-                                }
-                                DisplayState::Paused { at_x } => series
-                                    .data
-                                    .iter()
-                                    .filter(|&&[x, _]| x <= at_x)
-                                    .copied()
-                                    .collect(),
-                                DisplayState::DumpView => series.data.iter().copied().collect(),
-                            };
+                            let points: Vec<[f64; 2]> =
+                                get_points(series, self.state, self.stats.frame_rate);
 
                             if points.is_empty() {
                                 continue;
