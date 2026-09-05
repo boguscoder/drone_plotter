@@ -1,9 +1,8 @@
 use drone_consts::telemetry::Mode;
 
 pub fn load_app_icon() -> eframe::egui::IconData {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/icon.png");
-    let bytes = std::fs::read(path).unwrap();
-    eframe::icon_data::from_png_bytes(&bytes).unwrap()
+    eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png"))
+        .expect("invalid icon PNG")
 }
 
 pub fn mode_to_labels(mode: Mode) -> Vec<&'static str> {
