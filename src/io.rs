@@ -122,8 +122,7 @@ pub fn start_input_threads<F>(
                                                     frame[offset + 1],
                                                     frame[offset + 2],
                                                     frame[offset + 3],
-                                                ])
-                                                    as f64);
+                                                ]));
                                             }
                                             if !values.is_empty() {
                                                 let _ = data_channel.try_send(SensorData {

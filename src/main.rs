@@ -31,7 +31,7 @@ const MAX_PLOT_POINTS: usize = 2048;
 
 #[derive(Debug, Clone)]
 struct SensorData {
-    values: Vec<f64>,
+    values: Vec<f32>,
     pub mode: Mode,
 }
 
@@ -197,7 +197,7 @@ impl PlotterApp {
                 for (i, &new_val) in new_data.values.iter().take(vals).enumerate() {
                     self.data_history[i]
                         .data
-                        .enqueue([self.stats.frame_count as f64, new_val]);
+                        .enqueue([self.stats.frame_count as f64, new_val as f64]);
                 }
                 if self.log_raw_data {
                     println!("Raw data: {:?}", new_data.values);
@@ -218,40 +218,41 @@ impl PlotterApp {
                     self.stats.frame_rate
                 ));
 
-                ui.add_space(ui.available_width() - 235.0);
-                ui.checkbox(&mut self.log_raw_data, "Log Data");
-
-                let is_paused = matches!(self.state, DisplayState::Paused { .. });
-                let btn_text = if is_paused { "▶" } else { "⏸" };
-
-                if ui.button(btn_text).clicked() {
-                    if is_paused {
-                        self.state = DisplayState::Live;
-                    } else {
-                        self.state = DisplayState::Paused {
-                            at_x: self.stats.frame_count as f64,
-                        };
-                    }
-                }
-
-                if ui.button("💾").clicked() {
-                    self.cleanup_history();
-                    self.state = DisplayState::DumpView;
-                    self.cmd_sender.send(Command::DumpFlash).unwrap();
-                }
-
-                egui::ComboBox::from_label("")
-                    .selected_text(self.tele_mode.as_ref())
-                    .show_ui(ui, |ui| {
-                        for option in Mode::iter() {
-                            if ui
-                                .selectable_value(&mut self.tele_mode, option, option.as_ref())
-                                .clicked()
-                            {
-                                self.apply_mode();
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    egui::ComboBox::from_label("")
+                        .selected_text(self.tele_mode.as_ref())
+                        .show_ui(ui, |ui| {
+                            for option in Mode::iter() {
+                                if ui
+                                    .selectable_value(&mut self.tele_mode, option, option.as_ref())
+                                    .clicked()
+                                {
+                                    self.apply_mode();
+                                }
                             }
+                        });
+
+                    if ui.button("💾").clicked() {
+                        self.cleanup_history();
+                        self.state = DisplayState::DumpView;
+                        self.cmd_sender.send(Command::DumpFlash).unwrap();
+                    }
+
+                    let is_paused = matches!(self.state, DisplayState::Paused { .. });
+                    let btn_text = if is_paused { "▶" } else { "⏸" };
+
+                    if ui.button(btn_text).clicked() {
+                        if is_paused {
+                            self.state = DisplayState::Live;
+                        } else {
+                            self.state = DisplayState::Paused {
+                                at_x: self.stats.frame_count as f64,
+                            };
                         }
-                    });
+                    }
+
+                    ui.checkbox(&mut self.log_raw_data, "Log Data");
+                });
             });
             ui.add_space(1.0);
         });
