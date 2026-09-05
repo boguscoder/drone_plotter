@@ -371,9 +371,10 @@ impl eframe::App for PlotterApp {
 }
 
 fn main() -> eframe::Result {
-    let vp_builder: ViewportBuilder = ViewportBuilder::default();
     let options = eframe::NativeOptions {
-        viewport: vp_builder.with_inner_size([1280.0, 720.0]),
+        viewport: ViewportBuilder::default()
+            .with_inner_size([1280.0, 720.0])
+            .with_icon(utils::load_app_icon()),
         ..Default::default()
     };
 
